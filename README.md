@@ -63,7 +63,8 @@ First boot (or hold BOOT while powering on to re-enter setup):
 ## API Surface
 
 Read-only: `GET /api/status`, `/api/info`, `/api/config`, `/api/profiles`,
-`/api/debug/status`, plus SSE streams `/api/progress` and `/api/debug/stream`.
+`/api/debug/status`, `/api/relay/status`, plus SSE streams `/api/progress`
+and `/api/debug/stream`.
 
 Mutating (require `X-API-Key`):
 `POST /api/upload-hex`, `/api/program?protocol=auto|v1|v2`, `/api/override`,
@@ -88,6 +89,8 @@ src/core/            # translation units + global state
 src/modules/         # concern-based implementation (.inl per module)
 include/otabridge/   # public headers, OTABRIDGE_FW_VERSION
 data/index.html      # web UI served from LittleFS
+relay/               # cross-network control-plane backend (accounts, device
+                      # claim flow, Ed25519 device auth) — deploys separately
 platformio.ini
 ```
 
@@ -96,8 +99,13 @@ platformio.ini
 - TypeScript SDK (`otabridge-client`) generated against a frozen OpenAPI v1 spec
 - Deployable companion app for multi-device benches
 - LAN discovery (per-device mDNS is already in; enumeration layer to follow)
-- Ed25519 signed-firmware verification (real asymmetric signing)
-- Relay transport for off-LAN access
+- Relay transport for off-LAN access — **in progress**: control plane (`/relay`)
+  and firmware-side registration/claim/Ed25519-auth (`06_relay_client.inl`)
+  are in; command/data-plane proxying (program/debug/progress over the relay)
+  is not yet built
+- Ed25519 signed-firmware verification (real asymmetric signing) — the device
+  identity keypair above is a separate use of Ed25519 from this; firmware
+  signing itself is still unbuilt
 - ESP32 self-OTA (current binary: ~907KB of a 1.25MB OTA slot — fits)
 
 ## License

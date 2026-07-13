@@ -36,6 +36,14 @@
 // the boot banner, and (later) the SDK compatibility check.
 #define OTABRIDGE_FW_VERSION "1.0.0"
 
+// Relay service (see /relay) — cross-network device<->companion-app access.
+// Fill in your deployed Railway hostname before building, or override with
+// -D OTABRIDGE_RELAY_HOST=\"...\" per PlatformIO environment.
+#ifndef OTABRIDGE_RELAY_HOST
+#define OTABRIDGE_RELAY_HOST "your-relay.up.railway.app"
+#define OTABRIDGE_RELAY_PORT 443
+#endif
+
 enum ProgrammerState {
     STATE_IDLE,
     STATE_LOADING_HEX,
@@ -116,6 +124,15 @@ extern String debugLineBuf;
 extern unsigned long debugLastHeartbeat;
 extern FlashProtocol detectedProtocol;
 extern FlashProtocol preferredProtocol;
+
+// Relay identity/claim state — device<->relay trust is Ed25519, independent
+// of provision.deviceSecret (the local API key). See src/modules/06_relay_client.inl.
+extern String relayDeviceId;       // full-MAC hex, globally unique (distinct from deviceIdSuffix())
+extern String relayPublicKeyHex;
+extern String relayClaimCode;      // "" once claimed, or before the first successful register
+extern bool   relayRegistered;     // true once /devices/register has succeeded at least once
+extern bool   relayClaimed;
+extern bool   relayConnected;      // /ws/device challenge-response completed
 
 String generateSecret();
 String defaultDeviceName();

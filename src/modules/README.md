@@ -21,6 +21,10 @@ Concern-based modules, each included by exactly one translation unit in `src/cor
   - Wi-Fi startup + setup-AP fallback
   - Serial CLI
   - `setup()` / `loop()`
+- `06_relay_client.inl` (→ `core/RelayClient.cpp`)
+  - Ed25519 device identity (generate on first boot, persist to LittleFS)
+  - `/devices/register` + claim-code flow against the relay service (see `/relay`)
+  - `/ws/device` challenge-response presence connection
 
 Global state lives in `core/AppState.cpp`, declared in `include/otabridge/AppState.h`.
 `OTABRIDGE_FW_VERSION` in `AppState.h` is the single version source of truth.
