@@ -1,0 +1,49 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Account {
+  id           String          @id @default(cuid())
+  email        String          @unique
+  passwordHash String
+  createdAt    DateTime        @default(now())
+  devices      AccountDevice[]
+}
+
+model Device {
+  id         String      @id // MAC-derived device id suffix, matches firmware's deviceIdSuffix()
+  publicKey  String      // Ed25519 public key, hex-encoded
+  name       String
+  claimedAt  DateTime?
+  lastSeenAt DateTime?
+  createdAt  DateTime    @default(now())
+  claimCodes ClaimCode[]
+  accounts   AccountDevice[]
+}
+
+model ClaimCode {
+  code      String    @id
+  deviceId  String
+  device    Device    @relation(fields: [deviceId], references: [id])
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+}
+
+// Join table on purpose, even though v1 enforces exactly one owner per device
+// in application logic — lets shared/team device access land later without a
+// schema rewrite.
+model AccountDevice {
+  accountId String
+  deviceId  String
+  account   Account  @relation(fields: [accountId], references: [id])
+  device    Device   @relation(fields: [deviceId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@id([accountId, deviceId])
+}
