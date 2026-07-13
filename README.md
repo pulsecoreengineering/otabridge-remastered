@@ -91,6 +91,8 @@ include/otabridge/   # public headers, OTABRIDGE_FW_VERSION
 data/index.html      # web UI served from LittleFS
 relay/               # cross-network control-plane backend (accounts, device
                       # claim flow, Ed25519 device auth) — deploys separately
+companion-app/       # PWA (Vite+React), deploys to Vercel — talks to the
+                      # relay over HTTPS/WSS only, never touches a device's LAN
 platformio.ini
 ```
 
