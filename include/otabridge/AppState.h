@@ -40,7 +40,7 @@
 // Fill in your deployed Railway hostname before building, or override with
 // -D OTABRIDGE_RELAY_HOST=\"...\" per PlatformIO environment.
 #ifndef OTABRIDGE_RELAY_HOST
-#define OTABRIDGE_RELAY_HOST "your-relay.up.railway.app"
+#define OTABRIDGE_RELAY_HOST "otabridge-remastered-production.up.railway.app"
 #define OTABRIDGE_RELAY_PORT 443
 #endif
 
