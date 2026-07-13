@@ -14,6 +14,7 @@ void sseProgress(int page, int total, const char* label) {
         "{\"page\":%d,\"total\":%d,\"label\":\"%s\"}", page, total, label);
     events.send(buf, "progress", millis());
     Serial.printf("[PROGRESS] %d/%d %s\n", page, total, label);
+    relayPushProgress(page, total, label);
 }
 
 void sseState(const char* state) {
@@ -21,6 +22,7 @@ void sseState(const char* state) {
     snprintf(buf, sizeof(buf), "{\"state\":\"%s\"}", state);
     events.send(buf, "state", millis());
     Serial.printf("[STATE] %s\n", state);
+    relayPushStatus(state);
 }
 
 void sseDevice(int pidx, uint8_t sig[3]) {
@@ -71,6 +73,11 @@ void processDebugSerial() {
                     "{\"line\":\"%s\",\"ms\":%lu}",
                     safe.c_str(), millis());
                 debugEvents.send(buf, "line", millis());
+                // Raw (unescaped) line — relayPushDebugLine builds its own
+                // JSON via ArduinoJson, which escapes on serialize. `safe`
+                // above is already-escaped for the hand-built buf[] above
+                // and would be double-escaped if reused here.
+                relayPushDebugLine(debugLineBuf.c_str());
                 debugLineBuf = "";
             }
         } else if (c != '\r') {

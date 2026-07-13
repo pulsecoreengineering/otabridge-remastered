@@ -1,14 +1,23 @@
 # OTABridge Relay
 
 Control-plane backend for cross-network access: accounts, device registration,
-and the claim flow that binds a device to an account. This is what lets the
-companion app (and eventually the PWA) reach a device regardless of which
-network either side is on, without the browser ever touching the LAN directly.
+the claim flow that binds a device to an account, and — as of Phase A —
+command/status/debug routing between a companion app session and a specific
+device, all over WebSocket connections both sides open outbound. This is what
+lets the companion app (and eventually the PWA) reach a device regardless of
+which network either side is on, without the browser ever touching the LAN
+directly.
 
-**What this is not (yet):** command/data-plane proxying — routing an actual
-`program`/`debug` request or a live progress/debug stream from the companion
-app through to a specific device's socket. That's a deliberate follow-up
-phase; this package only establishes and tracks authenticated presence.
+Deployed and verified end-to-end on real hardware against production
+(Railway + real ESP32): identity, registration, claim (including the live
+"claimed" push to an already-connected device), and a command round trip
+(subscribe → cmd → cmd_result) have all been exercised against the live
+deployment or a real Postgres instance with simulated WebSocket clients.
+
+**What this is not (yet):** relaying actual firmware bytes (a `.hex` upload)
+through the relay — that's Phase B, deliberately deferred (see "Known gaps"
+below for why: it's a RAM problem on the device, not a flash problem, and
+overlaps with the not-yet-built streaming-HEX-ingest work).
 
 ## Why it exists
 
@@ -62,6 +71,39 @@ Three tiers, kept deliberately separate:
 device in application logic — this is so shared/team device access can land
 later without a schema rewrite.
 
+## Data-plane protocol (Phase A — control only, no firmware bytes)
+
+Once a device is authenticated on `/ws/device`, the relay stops caring what
+it sends — every post-auth message from the device is forwarded verbatim to
+whichever app sockets are subscribed to it. Commands flow the other way the
+same way. The relay validates ownership and routes; it doesn't interpret
+payloads — that logic lives entirely in firmware
+(`relayHandleCommand` in `06_relay_client.inl`) and, eventually, the app.
+
+**App → relay**, on `/ws/app?token=<jwt>`:
+```json
+{"type":"subscribe","deviceId":"..."}
+{"type":"cmd","deviceId":"...","action":"cancel|restart|status|debug_start|debug_stop|debug_send","requestId":"...", ...}
+```
+`subscribe` is ownership-checked once (against `AccountDevice`), not
+re-checked per push. `cmd` is ownership-checked per call, then forwarded
+to the device's live socket (minus `deviceId` — the device doesn't need it).
+An offline device or a device you don't own gets you back
+`{"type":"error","message":"device_offline"|"not_owned"}`.
+
+**Device → relay → subscribed app(s)**, forwarded as-is:
+```json
+{"type":"status","state":"idle|programming|...","page":N,"total":N,"lastError":"..."}
+{"type":"progress","page":N,"total":N,"label":"..."}
+{"type":"debug_line","line":"..."}
+{"type":"cmd_result","requestId":"...","ok":true|false,"message":"..."}
+```
+`status`/`progress`/`debug_line` are pushed automatically whenever the
+device's local SSE streams would fire (same trigger points — see
+`sseState()`/`sseProgress()`/`processDebugSerial()` in
+`02_runtime_io.inl`), so the relay mirrors the local UI rather than being a
+second source of truth.
+
 ## Local development
 
 ```bash
@@ -93,18 +135,24 @@ since the claim code only lives in the boot-time serial log otherwise.
 
 ## Known gaps / next phases
 
-- No command/data-plane relay yet (program/debug/progress proxying between a
-  specific app session and a specific device socket).
-- Presence registry is in-memory — fine for a single instance; a
-  multi-instance deployment needs a shared layer (e.g. Redis pub/sub) to route
-  across processes.
-- Firmware side is implemented (`src/modules/06_relay_client.inl`) but
-  untested against a real device — this package's routes were verified with
-  a real Postgres instance and real Ed25519 keypairs from a Node script; the
-  firmware side hasn't been compiled/flashed to hardware yet (no ESP32
-  toolchain in the environment that wrote it). Set
-  `OTABRIDGE_RELAY_HOST`/`OTABRIDGE_RELAY_PORT` (see `include/otabridge/AppState.h`)
-  to your deployed Railway hostname before building.
+- **Phase B (relay-mediated firmware upload) is unbuilt.** Deliberately: the
+  device already buffers a whole `.hex` file in RAM for *local* uploads
+  (see the top-level README's Known Limits), and wrapping firmware bytes in
+  JSON/base64 over WS would make that worse, not better. The plan is direct
+  LAN upload to the device's local IP whenever the app and device share a
+  network (relay only used for discovery/signaling in that case), and
+  chunked binary WS frames — written straight into a streaming flash
+  pipeline, never fully buffered — for genuine off-LAN uploads. Both need
+  the not-yet-built streaming HEX ingest first.
+- Presence registry (and now subscription routing) is in-memory — fine for a
+  single instance; a multi-instance deployment needs a shared layer (e.g.
+  Redis pub/sub) to route across processes.
+- Firmware's Phase A command dispatch (`relayHandleCommand` in
+  `06_relay_client.inl`) has not been compiled or flashed yet as of this
+  writing — the relay side of Phase A was verified with simulated WebSocket
+  clients against a real Postgres instance; the firmware side needs a real
+  build/flash/serial-monitor pass the same way the identity/claim flow got
+  tested.
 - Firmware skips TLS certificate validation on both the register call and the
   WS connection (see the note at the top of `06_relay_client.inl`) — fine for
   bench testing, not for a device leaving a trusted network.
