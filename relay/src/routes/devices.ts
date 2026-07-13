@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../db.js";
 import { verifyAccountToken } from "../auth.js";
 import { generateClaimCode, CLAIM_CODE_TTL_MS } from "../lib/claimCode.js";
-import { isDeviceOnline } from "../ws/registry.js";
+import { isDeviceOnline, deviceSockets } from "../ws/registry.js";
 
 async function requireAccount(req: FastifyRequest, reply: FastifyReply): Promise<string | null> {
   const header = req.headers.authorization;
@@ -76,6 +76,15 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       prisma.device.update({ where: { id: claimCode.deviceId }, data: { claimedAt: new Date() } }),
       prisma.accountDevice.create({ data: { accountId, deviceId: claimCode.deviceId } }),
     ]);
+
+    // If the device is sitting on an open /ws/device connection right now
+    // (the common case — it was just powered on to get this code), push it
+    // the claim immediately rather than making it wait for a reboot to find
+    // out via a fresh /devices/register call.
+    const socket = deviceSockets.get(claimCode.deviceId);
+    if (socket) {
+      socket.send(JSON.stringify({ type: "claimed" }));
+    }
 
     return { deviceId: claimCode.deviceId };
   });

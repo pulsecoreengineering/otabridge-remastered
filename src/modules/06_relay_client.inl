@@ -212,6 +212,12 @@ static void relayWsEvent(WStype_t type, uint8_t* payload, size_t length) {
             } else if (msgType == "authenticated") {
                 relayConnected = true;
                 Serial.println("[RELAY] authenticated");
+            } else if (msgType == "claimed") {
+                // Pushed the moment someone claims this device while it's
+                // connected — avoids waiting for a reboot to find out.
+                relayClaimed   = true;
+                relayClaimCode = "";
+                Serial.println("[RELAY] claimed by account");
             }
             break;
         }
