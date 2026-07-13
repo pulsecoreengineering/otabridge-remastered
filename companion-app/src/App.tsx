@@ -12,13 +12,21 @@ function App() {
 
   return (
     <>
-      <div className="logo">
-        <div className="hex" />
-        <div className="brand">Pulse<span>Core</span> — OTABridge</div>
-      </div>
+      <header className="app-header">
+        <div className="logo">
+          <span className="logo-mark">OTABridge</span>
+          <div className="logo-sep" />
+          <span className="logo-sub">Companion</span>
+        </div>
+        {authed && <span className="badge online">connected</span>}
+      </header>
 
       {!authed ? (
-        <LoginPage onAuthenticated={() => setAuthed(true)} />
+        <div className="center-shell">
+          <div className="auth-card">
+            <LoginPage onAuthenticated={() => setAuthed(true)} />
+          </div>
+        </div>
       ) : view.name === "devices" ? (
         <DevicesPage
           onLogout={() => setAuthed(false)}
