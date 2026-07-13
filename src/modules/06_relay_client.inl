@@ -327,8 +327,17 @@ static void relayHandleCommand(DynamicJsonDocument& doc) {
             programmerState      = STATE_LOADING_HEX;
             lastError            = "";
             cancelFlashRequested = false;
+            // Core 0, deliberately not core 1: loop() — which is what
+            // actually pumps relayWs.loop(), since WebSocketsClient only
+            // sends/receives when polled, unlike AsyncTCP's independent task
+            // for the local web server — runs on core 1 by default. Sharing
+            // that core with flashTask starved the WS connection badly
+            // enough in practice that this cmd_result ack (and the
+            // status/progress pushes during flashing) arrived many seconds
+            // late or not at all, even though flashing itself proceeded
+            // correctly on the device the whole time.
             xTaskCreatePinnedToCore(
-                flashTask, "flashTask", 8192, NULL, 1, &flashTaskHandle, 1);
+                flashTask, "flashTask", 8192, NULL, 1, &flashTaskHandle, 0);
             relaySendCmdResult(requestId, true);
         }
 

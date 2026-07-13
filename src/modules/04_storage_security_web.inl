@@ -403,8 +403,12 @@ void setupWebServer() {
         } else {
             preferredProtocol = PROTO_UNKNOWN;  // auto
         }
+        // Core 0, not core 1 — loop() (which pumps AsyncTCP locally, and
+        // WebSocketsClient's relay connection) runs on core 1 by default.
+        // Sharing that core with this task starves whichever of those needs
+        // polling, most visibly the relay path (see relay client's own note).
         xTaskCreatePinnedToCore(
-            flashTask, "flashTask", 8192, NULL, 1, &flashTaskHandle, 1);
+            flashTask, "flashTask", 8192, NULL, 1, &flashTaskHandle, 0);
         AsyncWebServerResponse* r = req->beginResponse(200,"application/json",
             "{\"success\":true,\"message\":\"Flash task started\"}");
         addCORS(r); req->send(r);
@@ -443,8 +447,9 @@ void setupWebServer() {
             manualOverride.protocol = (proto == "v2") ? PROTO_STK500V2 : PROTO_STK500V1;
             programmerState = STATE_LOADING_HEX; lastError = "";
             cancelFlashRequested = false;
+            // Core 0 — see the note on the /api/program task creation above.
             xTaskCreatePinnedToCore(
-                flashTask, "flashTask", 8192, NULL, 1, &flashTaskHandle, 1);
+                flashTask, "flashTask", 8192, NULL, 1, &flashTaskHandle, 0);
             AsyncWebServerResponse* r = req->beginResponse(200,"application/json",
                 "{\"success\":true}");
             addCORS(r); req->send(r);
