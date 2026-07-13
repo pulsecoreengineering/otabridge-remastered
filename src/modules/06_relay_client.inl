@@ -176,6 +176,114 @@ void registerWithRelay() {
     }
 }
 
+// ─── Command dispatch (Phase A: control-plane only — no firmware bytes
+// cross the relay; see relay/README.md for why) ─────────────────────
+static void relaySendCmdResult(const String& requestId, bool ok, const char* message = "") {
+    DynamicJsonDocument doc(256);
+    doc["type"]      = "cmd_result";
+    doc["requestId"] = requestId;
+    doc["ok"]        = ok;
+    if (message[0]) doc["message"] = message;
+    String out;
+    serializeJson(doc, out);
+    relayWs.sendTXT(out);
+}
+
+// Lighter than the local /api/status (no busy/detectedSig/detectedProtocol
+// formatting) — enough for a remote "what's it doing right now" check.
+static void relaySendStatusSnapshot() {
+    const char* s = "idle";
+    switch (programmerState) {
+        case STATE_IDLE:              s = "idle";              break;
+        case STATE_LOADING_HEX:       s = "loading";           break;
+        case STATE_ENTERING_PROGMODE: s = "entering_progmode"; break;
+        case STATE_READING_SIGNATURE: s = "reading_signature"; break;
+        case STATE_AWAITING_OVERRIDE: s = "awaiting_override"; break;
+        case STATE_PROGRAMMING:       s = "programming";       break;
+        case STATE_EXITING_PROGMODE:  s = "exiting";           break;
+        case STATE_SUCCESS:           s = "success";           break;
+        case STATE_ERROR:             s = "error";             break;
+    }
+    DynamicJsonDocument doc(320);
+    doc["type"]      = "status";
+    doc["state"]     = s;
+    doc["page"]      = currentPage;
+    doc["total"]     = totalPages;
+    doc["lastError"] = lastError;
+    String out;
+    serializeJson(doc, out);
+    relayWs.sendTXT(out);
+}
+
+static void relayHandleCommand(DynamicJsonDocument& doc) {
+    String action    = doc["action"]    | "";
+    String requestId = doc["requestId"] | "";
+
+    if (action == "cancel") {
+        // Mirrors POST /api/cancel.
+        manualOverride.active = false;
+        activeProfileIndex    = -1;
+        if (flashTaskHandle != NULL) {
+            cancelFlashRequested = true;
+        } else {
+            programmerState = STATE_IDLE;
+            lastError = "Cancelled by user";
+        }
+        relaySendCmdResult(requestId, true);
+
+    } else if (action == "restart") {
+        // Mirrors POST /api/restart — ack first, then reboot.
+        relaySendCmdResult(requestId, true);
+        delay(500);
+        ESP.restart();
+
+    } else if (action == "status") {
+        relaySendStatusSnapshot();
+        relaySendCmdResult(requestId, true);
+
+    } else if (action == "debug_start") {
+        // Mirrors POST /api/debug/start.
+        if (programmerState != STATE_IDLE && programmerState != STATE_SUCCESS &&
+            programmerState != STATE_ERROR) {
+            relaySendCmdResult(requestId, false, "Cannot start debug while programming");
+        } else {
+            debugBaudRate = doc["baud"] | 9600;
+            Serial1.end();
+            delay(50);
+            Serial1.begin(debugBaudRate, SERIAL_8N1, DEBUG_RX_PIN, DEBUG_TX_PIN);
+            delay(50);
+            while (Serial1.available()) Serial1.read(); // flush
+            debugLineBuf = "";
+            debugActive  = true;
+            relaySendCmdResult(requestId, true);
+        }
+
+    } else if (action == "debug_stop") {
+        // Mirrors POST /api/debug/stop.
+        debugActive  = false;
+        debugLineBuf = "";
+        Serial1.end();
+        relaySendCmdResult(requestId, true);
+
+    } else if (action == "debug_send") {
+        // Mirrors POST /api/debug/send.
+        if (!debugActive) {
+            relaySendCmdResult(requestId, false, "Debug not active");
+        } else {
+            String cmd = doc["text"] | "";
+            cmd.trim();
+            if (cmd.length() > 0) {
+                Serial1.print(cmd);
+                Serial1.print('\n'); // Mega needs \n to terminate readStringUntil('\n')
+            }
+            relaySendCmdResult(requestId, true);
+        }
+
+    } else {
+        relaySendCmdResult(requestId, false, "Unknown action");
+    }
+}
+
 // ─── /ws/device challenge-response ─────────────────────
 static void relayWsEvent(WStype_t type, uint8_t* payload, size_t length) {
     switch (type) {
@@ -188,7 +296,9 @@ static void relayWsEvent(WStype_t type, uint8_t* payload, size_t length) {
             break;
 
         case WStype_TEXT: {
-            DynamicJsonDocument doc(256);
+            // 384 rather than 256 — a "cmd" message can carry a debug_send
+            // `text` field on top of type/action/requestId.
+            DynamicJsonDocument doc(384);
             if (deserializeJson(doc, payload, length)) return;
             String msgType = doc["type"] | "";
 
@@ -218,6 +328,8 @@ static void relayWsEvent(WStype_t type, uint8_t* payload, size_t length) {
                 relayClaimed   = true;
                 relayClaimCode = "";
                 Serial.println("[RELAY] claimed by account");
+            } else if (msgType == "cmd") {
+                relayHandleCommand(doc);
             }
             break;
         }
@@ -237,4 +349,40 @@ void relayLoop() {
         relayWsStarted = true;
     }
     relayWs.loop();
+}
+
+// ─── Data-plane pushes ──────────────────────────────────
+// Called from src/modules/02_runtime_io.inl's sseState()/sseProgress()/
+// processDebugSerial() — mirrors the local SSE streams to the relay so
+// there's one source of truth for "what happened," not two.
+void relayPushStatus(const char* state) {
+    if (!relayConnected) return;
+    DynamicJsonDocument doc(128);
+    doc["type"]  = "status";
+    doc["state"] = state;
+    String out;
+    serializeJson(doc, out);
+    relayWs.sendTXT(out);
+}
+
+void relayPushProgress(int page, int total, const char* label) {
+    if (!relayConnected) return;
+    DynamicJsonDocument doc(256);
+    doc["type"]  = "progress";
+    doc["page"]  = page;
+    doc["total"] = total;
+    doc["label"] = label;
+    String out;
+    serializeJson(doc, out);
+    relayWs.sendTXT(out);
+}
+
+void relayPushDebugLine(const char* line) {
+    if (!relayConnected) return;
+    DynamicJsonDocument doc(320);
+    doc["type"] = "debug_line";
+    doc["line"] = line;
+    String out;
+    serializeJson(doc, out);
+    relayWs.sendTXT(out);
 }

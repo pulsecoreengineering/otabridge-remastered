@@ -25,6 +25,10 @@ Concern-based modules, each included by exactly one translation unit in `src/cor
   - Ed25519 device identity (generate on first boot, persist to LittleFS)
   - `/devices/register` + claim-code flow against the relay service (see `/relay`)
   - `/ws/device` challenge-response presence connection
+  - Phase A command dispatch (`relayHandleCommand`: cancel/restart/status/
+    debug_start/debug_stop/debug_send) and data-plane pushes
+    (`relayPushStatus`/`relayPushProgress`/`relayPushDebugLine`, called from
+    `02_runtime_io.inl`'s SSE helpers so the relay mirrors the local UI)
 
 Global state lives in `core/AppState.cpp`, declared in `include/otabridge/AppState.h`.
 `OTABRIDGE_FW_VERSION` in `AppState.h` is the single version source of truth.

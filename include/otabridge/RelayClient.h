@@ -20,3 +20,11 @@ void registerWithRelay();
 // normal (non-provisioning) mode; internally a no-op until registerWithRelay()
 // has succeeded at least once.
 void relayLoop();
+
+// Data-plane pushes — cheap no-ops when the relay isn't connected. Called
+// from src/modules/02_runtime_io.inl's sseState()/sseProgress()/
+// processDebugSerial() so the relay mirrors what the local SSE streams
+// already send, without a second source of truth.
+void relayPushStatus(const char* state);
+void relayPushProgress(int page, int total, const char* label);
+void relayPushDebugLine(const char* line);
