@@ -23,6 +23,15 @@ static uint8_t relayPublicKey[32];
 static WebSocketsClient relayWs;
 static bool relayWsStarted = false;
 
+// Relay-mediated `program` — bounded to boards that already work fine with
+// the existing full-buffer local upload path (see /api/upload-hex): 128KB of
+// hex TEXT comfortably covers even a fully-packed 32KB-flash board (Uno,
+// Nano, Leonardo, Pro Micro — Intel HEX text runs ~2.7x the binary size), well
+// short of Mega territory. Mega-class images need streaming ingest first,
+// deliberately not attempted here — see relay/README.md.
+#define RELAY_PROGRAM_MAX_HEX_BYTES 131072
+static bool relayProgramReceiving = false;
+
 static void relayBytesToHex(const uint8_t* bytes, size_t len, char* out) {
     static const char* hexchars = "0123456789abcdef";
     for (size_t i = 0; i < len; i++) {
@@ -265,6 +274,64 @@ static void relayHandleCommand(DynamicJsonDocument& doc) {
         Serial1.end();
         relaySendCmdResult(requestId, true);
 
+    } else if (action == "program_start") {
+        // Mirrors the start of POST /api/upload-hex (clears currentHexData)
+        // plus the busy-check from POST /api/program.
+        if (programmerState != STATE_IDLE && programmerState != STATE_SUCCESS &&
+            programmerState != STATE_ERROR) {
+            relaySendCmdResult(requestId, false, "Programmer busy");
+        } else {
+            long totalBytes = doc["totalBytes"] | 0;
+            if (totalBytes <= 0 || totalBytes > RELAY_PROGRAM_MAX_HEX_BYTES) {
+                relaySendCmdResult(requestId, false,
+                    "Hex too large for relay upload — use local upload, or "
+                    "wait for Mega streaming support");
+            } else {
+                currentHexData         = "";
+                activeProfileIndex     = -1;
+                manualOverride.active  = false;
+                relayProgramReceiving  = true;
+                String proto = doc["protocol"] | "auto";
+                if      (proto == "v1") preferredProtocol = PROTO_STK500V1;
+                else if (proto == "v2") preferredProtocol = PROTO_STK500V2;
+                else                    preferredProtocol = PROTO_UNKNOWN;
+                relaySendCmdResult(requestId, true);
+            }
+        }
+
+    } else if (action == "program_chunk") {
+        if (!relayProgramReceiving) {
+            relaySendCmdResult(requestId, false, "No program_start in progress");
+        } else {
+            String chunk = doc["data"] | "";
+            // Defensive cap — program_start only checked the *declared*
+            // total; don't trust it, enforce on what's actually arriving.
+            if (currentHexData.length() + chunk.length() > RELAY_PROGRAM_MAX_HEX_BYTES) {
+                relayProgramReceiving = false;
+                currentHexData        = "";
+                relaySendCmdResult(requestId, false, "Exceeded max hex size — aborted");
+            } else {
+                currentHexData += chunk;
+                relaySendCmdResult(requestId, true);
+            }
+        }
+
+    } else if (action == "program_end") {
+        // Mirrors POST /api/program's task kickoff — from here, the existing
+        // sseState()/sseProgress() hooks already push to the relay as
+        // flashTask runs, nothing extra needed.
+        relayProgramReceiving = false;
+        if (currentHexData.length() == 0) {
+            relaySendCmdResult(requestId, false, "No hex data received");
+        } else {
+            programmerState      = STATE_LOADING_HEX;
+            lastError            = "";
+            cancelFlashRequested = false;
+            xTaskCreatePinnedToCore(
+                flashTask, "flashTask", 8192, NULL, 1, &flashTaskHandle, 1);
+            relaySendCmdResult(requestId, true);
+        }
+
     } else if (action == "debug_send") {
         // Mirrors POST /api/debug/send.
         if (!debugActive) {
@@ -296,9 +363,14 @@ static void relayWsEvent(WStype_t type, uint8_t* payload, size_t length) {
             break;
 
         case WStype_TEXT: {
-            // 384 rather than 256 — a "cmd" message can carry a debug_send
-            // `text` field on top of type/action/requestId.
-            DynamicJsonDocument doc(384);
+            // Sized off the actual frame, not a fixed guess — a program_chunk
+            // cmd can carry several KB of hex text, far past what a small
+            // control message (challenge/authenticated/cancel/...) needs.
+            // Parsing from this mutable payload buffer lets ArduinoJson
+            // reference string data in place rather than copying it into the
+            // document's own pool, so this isn't doubling the payload's RAM
+            // cost — the +256 covers JSON structure overhead, not string data.
+            DynamicJsonDocument doc(length + 256);
             if (deserializeJson(doc, payload, length)) return;
             String msgType = doc["type"] | "";
 
