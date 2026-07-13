@@ -378,6 +378,7 @@ void setupWiFi() {
             MDNS.addService("http", "tcp", 80);
             Serial.printf("mDNS: http://%s.local\n", host.c_str());
         }
+        registerWithRelay();
     } else {
         // Failed to connect — fall back to the setup AP so the user can
         // fix credentials. isProvisionMode makes setup() start the
@@ -471,6 +472,19 @@ void processSerialCommands() {
             WiFi.getMode()==WIFI_AP
                 ? WiFi.softAPIP().toString().c_str()
                 : WiFi.localIP().toString().c_str());
+    } else if (cmd == "relay") {
+        Serial.printf("Registered: %s\n", relayRegistered ? "yes" : "no");
+        if (relayRegistered) {
+            Serial.printf("Device ID:  %s\n", relayDeviceId.c_str());
+            Serial.printf("Claimed:    %s\n", relayClaimed ? "yes" : "no");
+            Serial.printf("Connected:  %s\n", relayConnected ? "yes" : "no");
+            if (!relayClaimed && relayClaimCode.length()) {
+                Serial.printf("Claim code: %s (15 min from registration)\n",
+                    relayClaimCode.c_str());
+            }
+        } else {
+            Serial.println("(not yet registered with the relay — connect to WiFi first)");
+        }
     } else if (cmd == "delprovision") {
         // Delete provision config and reboot into setup mode
         if (LittleFS.exists("/provision.json")) {
@@ -503,6 +517,7 @@ void processSerialCommands() {
         Serial.println("  wifi          — WiFi mode and IP");
         Serial.println("  scan          — list nearby WiFi networks");
         Serial.println("  provision     — show provision config + current IP");
+        Serial.println("  relay         — show relay registration/claim status");
         Serial.println("  setprov <ssid> <pass> [name] [secret]");
         Serial.println("                — provision non-interactively (bench/factory)");
         Serial.println("  delprovision  — delete provision config, reboot to setup mode");
@@ -612,6 +627,7 @@ void loop() {
     }
     processSerialCommands();
     processDebugSerial();
+    relayLoop();
     static unsigned long lastBlink = 0;
     if (programmerState == STATE_IDLE && millis() - lastBlink > 2000) {
         digitalWrite(config.ledPin, HIGH); delay(50);

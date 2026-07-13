@@ -171,6 +171,21 @@ void setupWebServer() {
         addCORS(r); req->send(r);
     });
 
+    // GET /api/relay/status — read-only, so the claim code stays visible
+    // beyond the boot-time serial log (a fresh code needs a reboot once the
+    // 15-minute window lapses; see src/modules/06_relay_client.inl).
+    server.on("/api/relay/status", HTTP_GET, [](AsyncWebServerRequest* req) {
+        DynamicJsonDocument doc(256);
+        doc["registered"] = relayRegistered;
+        doc["deviceId"]   = relayDeviceId;
+        doc["claimed"]    = relayClaimed;
+        doc["connected"]  = relayConnected;
+        if (!relayClaimed) doc["claimCode"] = relayClaimCode;
+        String out; serializeJson(doc, out);
+        AsyncWebServerResponse* r = req->beginResponse(200, "application/json", out);
+        addCORS(r); req->send(r);
+    });
+
     // GET /api/profiles
     server.on("/api/profiles", HTTP_GET, [](AsyncWebServerRequest* req) {
         DynamicJsonDocument doc(4096);

@@ -40,6 +40,13 @@ uint32_t        debugBaudRate = 9600;
 String          debugLineBuf  = "";
 unsigned long   debugLastHeartbeat = 0;
 
+String relayDeviceId     = "";
+String relayPublicKeyHex = "";
+String relayClaimCode    = "";
+bool   relayRegistered   = false;
+bool   relayClaimed      = false;
+bool   relayConnected    = false;
+
 String generateSecret() {
     String s = "";
     const char hex[] = "0123456789abcdef";
