@@ -51,54 +51,63 @@ export function DevicesPage({
     }
   }
 
+  const onlineCount = devices.filter((d) => d.online).length;
+
   return (
     <>
-      <div className="row-between" style={{ marginBottom: 16 }}>
-        <h1 style={{ marginBottom: 0 }}>Your devices</h1>
-        <button onClick={() => { clearToken(); onLogout(); }}>Log out</button>
+      {/* Claim bar — compact, single row */}
+      <div className="panel">
+        <div className="panel-body" style={{ padding: "10px 12px" }}>
+          <div className="row">
+            <input
+              style={{ flex: 1 }}
+              placeholder="Claim code — XXXX-XXXX"
+              value={claimCode}
+              onChange={(e) => setClaimCode(e.target.value.toUpperCase())}
+              disabled={claimBusy}
+              onKeyDown={(e) => e.key === "Enter" && claimCode.trim() && handleClaim()}
+            />
+            <button className="primary" disabled={claimBusy || !claimCode.trim()} onClick={handleClaim}>
+              Claim
+            </button>
+          </div>
+          {claimMsg && <div className={`msg ${claimMsg.ok ? "ok" : "err"}`}>{claimMsg.text}</div>}
+        </div>
       </div>
 
-      <div className="card">
-        <h2>Add a device</h2>
-        <p className="sub">Enter the claim code shown on the device's serial console after it joins Wi-Fi.</p>
-        <div className="row">
-          <input
-            style={{ flex: 1 }}
-            placeholder="XXXX-XXXX"
-            value={claimCode}
-            onChange={(e) => setClaimCode(e.target.value.toUpperCase())}
-            disabled={claimBusy}
-          />
-          <button className="primary" style={{ width: "auto" }} disabled={claimBusy || !claimCode.trim()} onClick={handleClaim}>
-            Claim
-          </button>
+      <div className="panel">
+        <div className="panel-header">
+          <span className="panel-title">
+            Devices{devices.length > 0 && ` — ${onlineCount}/${devices.length} online`}
+          </span>
+          <button className="ghost" onClick={refresh} disabled={loading}>&#8635;</button>
         </div>
-        {claimMsg && <div className={`msg ${claimMsg.ok ? "ok" : "err"}`}>{claimMsg.text}</div>}
+        <div className="panel-body">
+          {error && <div className="msg err">{error}</div>}
+          {loading ? (
+            <p style={{ color: "var(--text-muted)", fontSize: 11 }}>Loading…</p>
+          ) : devices.length === 0 ? (
+            <p style={{ color: "var(--text-muted)", fontSize: 11 }}>No devices yet — claim one above.</p>
+          ) : (
+            <ul className="device-list">
+              {devices.map((d) => (
+                <li key={d.id} className="device-row" onClick={() => onSelectDevice(d.id)}>
+                  <div className="device-row-left">
+                    <span className={`dot ${d.online ? "online" : ""}`} />
+                    <span>{d.name}</span>
+                    <span className="device-id">{d.id}</span>
+                  </div>
+                  <span className={`badge ${d.online ? "online" : ""}`}>{d.online ? "online" : "offline"}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
 
-      <div className="card">
-        <div className="row-between">
-          <h2 style={{ marginBottom: 0 }}>Devices</h2>
-          <button onClick={refresh} disabled={loading}>Refresh</button>
-        </div>
-        {error && <div className="msg err">{error}</div>}
-        {loading ? (
-          <p className="sub" style={{ marginTop: 12 }}>Loading…</p>
-        ) : devices.length === 0 ? (
-          <p className="sub" style={{ marginTop: 12 }}>No devices yet — claim one above.</p>
-        ) : (
-          <ul className="device-list" style={{ marginTop: 8 }}>
-            {devices.map((d) => (
-              <li key={d.id} className="device-item" onClick={() => onSelectDevice(d.id)}>
-                <span>
-                  <span className={`dot ${d.online ? "online" : "offline"}`} />
-                  {d.name}
-                </span>
-                <span className="sub">{d.online ? "online" : "offline"}</span>
-              </li>
-            ))}
-          </ul>
-        )}
+      <div className="row-between">
+        <span style={{ fontSize: 10, color: "var(--text-muted)" }}>PulseCore Engineering</span>
+        <button className="ghost" onClick={() => { clearToken(); onLogout(); }}>Log out</button>
       </div>
     </>
   );

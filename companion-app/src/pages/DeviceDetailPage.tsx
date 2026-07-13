@@ -4,28 +4,37 @@ import { getToken } from "../api/client";
 
 const CHUNK_SIZE = 4096; // chars of hex text per program_chunk — see relay/README.md
 const MAX_HEX_BYTES = 131072; // must match RELAY_PROGRAM_MAX_HEX_BYTES in firmware
+const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 500000];
 
 type Status = { state: string; page: number; total: number; lastError: string };
+type LogLine = { time: string; text: string };
 
 const BUSY_STATES = new Set(["loading", "entering_progmode", "reading_signature", "programming", "exiting"]);
 
 export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBack: () => void }) {
   const socketRef = useRef<RelaySocket | null>(null);
+  const consoleRef = useRef<HTMLDivElement>(null);
   const [connected, setConnected] = useState(false);
   const [connError, setConnError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>({ state: "unknown", page: 0, total: 0, lastError: "" });
   const [progress, setProgress] = useState<{ page: number; total: number; label: string } | null>(null);
-  const [log, setLog] = useState<string[]>([]);
+  const [log, setLog] = useState<LogLine[]>([]);
   const [debugActive, setDebugActive] = useState(false);
+  const [debugBaud, setDebugBaud] = useState(9600);
   const [debugText, setDebugText] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [protocol, setProtocol] = useState<"auto" | "v1" | "v2">("auto");
   const [uploadProgress, setUploadProgress] = useState<{ sent: number; total: number } | null>(null);
   const [busy, setBusy] = useState(false);
 
-  function appendLog(line: string) {
-    setLog((prev) => [...prev.slice(-199), line]);
+  function appendLog(text: string) {
+    const time = new Date().toTimeString().slice(0, 8);
+    setLog((prev) => [...prev.slice(-199), { time, text }]);
   }
+
+  useEffect(() => {
+    consoleRef.current?.scrollTo({ top: consoleRef.current.scrollHeight });
+  }, [log]);
 
   useEffect(() => {
     const token = getToken();
@@ -47,9 +56,9 @@ export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBac
       } else if (msg.type === "progress") {
         setProgress({ page: msg.page, total: msg.total, label: msg.label });
       } else if (msg.type === "debug_line") {
-        appendLog(`[debug] ${msg.line}`);
+        appendLog(msg.line);
       } else if (msg.type === "error") {
-        appendLog(`[error] ${msg.message}`);
+        appendLog(`error: ${msg.message}`);
       }
     });
 
@@ -83,14 +92,11 @@ export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBac
     try {
       const text = await file.text();
       if (text.length > MAX_HEX_BYTES) {
-        appendLog(`program: file too large for relay upload (${text.length} > ${MAX_HEX_BYTES} bytes of hex text) — this board/size isn't supported over the relay yet`);
+        appendLog(`program: file too large for relay upload (${text.length} > ${MAX_HEX_BYTES} bytes) — not supported over the relay yet`);
         return;
       }
 
-      await socketRef.current.sendCmd(deviceId, "program_start", {
-        totalBytes: text.length,
-        protocol,
-      });
+      await socketRef.current.sendCmd(deviceId, "program_start", { totalBytes: text.length, protocol });
 
       const chunks = Math.ceil(text.length / CHUNK_SIZE) || 1;
       for (let i = 0; i < chunks; i++) {
@@ -110,81 +116,116 @@ export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBac
 
   const stateBadgeClass = BUSY_STATES.has(status.state)
     ? "busy"
-    : status.state === "error"
-      ? "error"
-      : status.state === "success"
-        ? "success"
-        : "";
+    : status.state === "error" ? "error" : status.state === "success" ? "success" : "";
 
   return (
     <>
-      <button className="back-link" onClick={onBack}>&larr; Devices</button>
+      <button className="back-link" onClick={onBack}>&larr; devices</button>
 
-      <div className="card">
-        <div className="row-between">
-          <h1 style={{ marginBottom: 0 }}>{deviceId}</h1>
-          <span className={`state-badge ${stateBadgeClass}`}>{status.state}</span>
+      <div className="row-between" style={{ marginBottom: 14 }}>
+        <div className="row">
+          <span className={`dot ${connected ? "online" : ""}`} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{deviceId}</span>
         </div>
-        <p className="sub">{connected ? "Connected to relay" : connError ?? "Connecting…"}</p>
-        {progress && progress.total > 0 && (
-          <>
-            <div className="progress-track">
-              <div className="progress-fill" style={{ width: `${(progress.page / progress.total) * 100}%` }} />
-            </div>
-            <p className="sub">{progress.label} — page {progress.page}/{progress.total}</p>
-          </>
-        )}
-        {status.lastError && <div className="msg err">{status.lastError}</div>}
-
-        <div className="row" style={{ marginTop: 12 }}>
-          <button disabled={busy || !connected} onClick={() => runCmd("status")}>Refresh status</button>
-          <button disabled={busy || !connected} onClick={() => runCmd("cancel")}>Cancel</button>
-          <button disabled={busy || !connected} onClick={() => runCmd("restart")}>Restart device</button>
-        </div>
+        <span className={`badge ${stateBadgeClass}`}>{status.state}</span>
       </div>
 
-      <div className="card">
-        <h2>Program</h2>
-        <p className="sub">Small/medium boards only for now (Uno, Nano, Pro Mini, Leonardo, Pro Micro) — Mega-class images need streaming ingest, not yet built.</p>
-        <div className="field">
-          <label>Hex file</label>
-          <input type="file" accept=".hex" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-        </div>
-        <div className="field">
-          <label>Protocol</label>
-          <select value={protocol} onChange={(e) => setProtocol(e.target.value as "auto" | "v1" | "v2")}>
-            <option value="auto">Auto-detect</option>
-            <option value="v1">STK500v1</option>
-            <option value="v2">STK500v2</option>
-          </select>
-        </div>
-        <button className="primary" disabled={busy || !connected || !file} onClick={handleProgram}>
-          Upload &amp; Flash
-        </button>
-        {uploadProgress && (
-          <div className="progress-track">
-            <div className="progress-fill" style={{ width: `${(uploadProgress.sent / uploadProgress.total) * 100}%` }} />
+      {connError && <div className="msg err">{connError}</div>}
+
+      <div className="grid-2">
+        {/* Control panel */}
+        <div className="panel">
+          <div className="panel-header">
+            <span className="panel-title">Control</span>
           </div>
-        )}
+          <div className="panel-body">
+            {progress && progress.total > 0 ? (
+              <>
+                <div className="progress-track">
+                  <div className="progress-fill" style={{ width: `${(progress.page / progress.total) * 100}%` }} />
+                </div>
+                <p style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                  {progress.label} — page {progress.page}/{progress.total}
+                </p>
+              </>
+            ) : (
+              <p style={{ fontSize: 11, color: "var(--text-dim)" }}>
+                {connected ? "Idle — no active flash" : "Connecting to relay…"}
+              </p>
+            )}
+            {status.lastError && <div className="msg err">{status.lastError}</div>}
+
+            <div className="row" style={{ marginTop: 12 }}>
+              <button disabled={busy || !connected} onClick={() => runCmd("status")}>Refresh</button>
+              <button disabled={busy || !connected} onClick={() => runCmd("cancel")}>Cancel</button>
+              <button className="danger" disabled={busy || !connected} onClick={() => runCmd("restart")}>Restart</button>
+            </div>
+          </div>
+        </div>
+
+        {/* Program panel */}
+        <div className="panel">
+          <div className="panel-header">
+            <span className="panel-title">Program</span>
+            <span className="badge">Uno/Nano/Mini/Leo</span>
+          </div>
+          <div className="panel-body">
+            <label className="upload-zone" style={{ display: "block", marginBottom: 10 }}>
+              <input type="file" accept=".hex" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+              {file ? file.name : "Drop .hex or click to browse"}
+            </label>
+            <div className="row" style={{ marginBottom: 10 }}>
+              <select value={protocol} onChange={(e) => setProtocol(e.target.value as "auto" | "v1" | "v2")}>
+                <option value="auto">Auto-detect</option>
+                <option value="v1">STK500v1</option>
+                <option value="v2">STK500v2</option>
+              </select>
+            </div>
+            <button className="primary" style={{ width: "100%" }} disabled={busy || !connected || !file} onClick={handleProgram}>
+              Upload &amp; Flash
+            </button>
+            {uploadProgress && (
+              <div className="progress-track">
+                <div className="progress-fill" style={{ width: `${(uploadProgress.sent / uploadProgress.total) * 100}%` }} />
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
-      <div className="card">
-        <h2>Debug console</h2>
-        <div className="row" style={{ marginBottom: 8 }}>
-          <button
-            disabled={busy || !connected}
-            onClick={() => { runCmd("debug_start"); setDebugActive(true); }}
-          >
-            Start
-          </button>
-          <button
-            disabled={busy || !connected}
-            onClick={() => { runCmd("debug_stop"); setDebugActive(false); }}
-          >
-            Stop
-          </button>
+      {/* Debug console */}
+      <div className="panel">
+        <div className="panel-header">
+          <span className="panel-title">Debug console</span>
+          <div className="row">
+            <select
+              value={debugBaud}
+              onChange={(e) => setDebugBaud(Number(e.target.value))}
+              style={{ width: "auto", padding: "3px 6px", fontSize: 10 }}
+              disabled={debugActive}
+            >
+              {BAUD_RATES.map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
+            {!debugActive ? (
+              <button disabled={busy || !connected} onClick={() => { runCmd("debug_start", { baud: debugBaud }); setDebugActive(true); }}>
+                Start
+              </button>
+            ) : (
+              <button className="danger" disabled={busy} onClick={() => { runCmd("debug_stop"); setDebugActive(false); }}>
+                Stop
+              </button>
+            )}
+          </div>
         </div>
-        <div className="row" style={{ marginBottom: 8 }}>
+        <div className="console" ref={consoleRef}>
+          {log.map((l, i) => (
+            <div className="console-line" key={i}>
+              <span className="console-time">{l.time}</span>
+              <span className="console-msg">{l.text}</span>
+            </div>
+          ))}
+        </div>
+        <div className="row" style={{ padding: "8px 12px", borderTop: "1px solid var(--border)" }}>
           <input
             style={{ flex: 1 }}
             placeholder="Send to target…"
@@ -198,8 +239,13 @@ export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBac
               }
             }}
           />
+          <button
+            disabled={!debugActive || !debugText.trim()}
+            onClick={() => { runCmd("debug_send", { text: debugText }); setDebugText(""); }}
+          >
+            Send
+          </button>
         </div>
-        <div id="console-log">{log.join("\n")}</div>
       </div>
     </>
   );
