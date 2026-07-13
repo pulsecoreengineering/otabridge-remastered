@@ -83,14 +83,16 @@ export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBac
     };
   }, [deviceId]);
 
-  async function runCmd(action: string, extra: Record<string, unknown> = {}) {
-    if (!socketRef.current) return;
+  async function runCmd(action: string, extra: Record<string, unknown> = {}): Promise<boolean> {
+    if (!socketRef.current) return false;
     setBusy(true);
     try {
       await socketRef.current.sendCmd(deviceId, action, extra);
       logActivity(`${action}: ok`);
+      return true;
     } catch (e) {
       logActivity(`${action}: ${e instanceof Error ? e.message : "failed"}`);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -210,8 +212,8 @@ export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBac
         lines={debugLog}
         active={debugActive}
         disabled={busy || !connected}
-        onStart={(baud) => { runCmd("debug_start", { baud }); setDebugActive(true); }}
-        onStop={() => { runCmd("debug_stop"); setDebugActive(false); }}
+        onStart={async (baud) => { if (await runCmd("debug_start", { baud })) setDebugActive(true); }}
+        onStop={async () => { if (await runCmd("debug_stop")) setDebugActive(false); }}
         onSend={(text) => runCmd("debug_send", { text })}
       />
     </>
