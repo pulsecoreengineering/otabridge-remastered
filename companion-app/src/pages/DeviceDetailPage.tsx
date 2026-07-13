@@ -1,40 +1,42 @@
 import { useEffect, useRef, useState } from "react";
 import { RelaySocket, type RelayMessage } from "../api/relaySocket";
 import { getToken } from "../api/client";
+import { ActivityLog } from "../components/ActivityLog";
+import { DebugConsole } from "../components/DebugConsole";
+import { nowStamp, type LogLine } from "../types";
 
 const CHUNK_SIZE = 4096; // chars of hex text per program_chunk — see relay/README.md
 const MAX_HEX_BYTES = 131072; // must match RELAY_PROGRAM_MAX_HEX_BYTES in firmware
-const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 500000];
 
 type Status = { state: string; page: number; total: number; lastError: string };
-type LogLine = { time: string; text: string };
 
 const BUSY_STATES = new Set(["loading", "entering_progmode", "reading_signature", "programming", "exiting"]);
 
 export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBack: () => void }) {
   const socketRef = useRef<RelaySocket | null>(null);
-  const consoleRef = useRef<HTMLDivElement>(null);
   const [connected, setConnected] = useState(false);
   const [connError, setConnError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>({ state: "unknown", page: 0, total: 0, lastError: "" });
   const [progress, setProgress] = useState<{ page: number; total: number; label: string } | null>(null);
-  const [log, setLog] = useState<LogLine[]>([]);
+  // Two separate feeds on purpose — see components/ActivityLog.tsx and
+  // components/DebugConsole.tsx: relay/control-plane activity ("my command
+  // failed") is a different concern from the target device's own serial
+  // output ("the Arduino printed something"), and conflating them made both
+  // harder to read.
+  const [activityLog, setActivityLog] = useState<LogLine[]>([]);
+  const [debugLog, setDebugLog] = useState<LogLine[]>([]);
   const [debugActive, setDebugActive] = useState(false);
-  const [debugBaud, setDebugBaud] = useState(9600);
-  const [debugText, setDebugText] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [protocol, setProtocol] = useState<"auto" | "v1" | "v2">("auto");
   const [uploadProgress, setUploadProgress] = useState<{ sent: number; total: number } | null>(null);
   const [busy, setBusy] = useState(false);
 
-  function appendLog(text: string) {
-    const time = new Date().toTimeString().slice(0, 8);
-    setLog((prev) => [...prev.slice(-199), { time, text }]);
+  function logActivity(text: string) {
+    setActivityLog((prev) => [...prev.slice(-199), { time: nowStamp(), text }]);
   }
-
-  useEffect(() => {
-    consoleRef.current?.scrollTo({ top: consoleRef.current.scrollHeight });
-  }, [log]);
+  function logDebug(text: string) {
+    setDebugLog((prev) => [...prev.slice(-499), { time: nowStamp(), text }]);
+  }
 
   useEffect(() => {
     const token = getToken();
@@ -53,7 +55,7 @@ export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBac
     const unsubscribe = socket.onMessage((msg: RelayMessage) => {
       if (msg.type === "subscribed") {
         setConnected(true);
-        appendLog(`subscribed to ${msg.deviceId}`);
+        logActivity(`subscribed to ${msg.deviceId}`);
       } else if (msg.type === "status") {
         setStatus({
           state: msg.state,
@@ -64,9 +66,9 @@ export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBac
       } else if (msg.type === "progress") {
         setProgress({ page: msg.page, total: msg.total, label: msg.label });
       } else if (msg.type === "debug_line") {
-        appendLog(msg.line);
+        logDebug(msg.line);
       } else if (msg.type === "error") {
-        appendLog(`error: ${msg.message}`);
+        logActivity(`error: ${msg.message}`);
       }
     });
 
@@ -86,9 +88,9 @@ export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBac
     setBusy(true);
     try {
       await socketRef.current.sendCmd(deviceId, action, extra);
-      appendLog(`${action}: ok`);
+      logActivity(`${action}: ok`);
     } catch (e) {
-      appendLog(`${action}: ${e instanceof Error ? e.message : "failed"}`);
+      logActivity(`${action}: ${e instanceof Error ? e.message : "failed"}`);
     } finally {
       setBusy(false);
     }
@@ -101,7 +103,7 @@ export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBac
     try {
       const text = await file.text();
       if (text.length > MAX_HEX_BYTES) {
-        appendLog(`program: file too large for relay upload (${text.length} > ${MAX_HEX_BYTES} bytes) — not supported over the relay yet`);
+        logActivity(`program: file too large for relay upload (${text.length} > ${MAX_HEX_BYTES} bytes) — not supported over the relay yet`);
         return;
       }
 
@@ -115,9 +117,9 @@ export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBac
       }
 
       await socketRef.current.sendCmd(deviceId, "program_end");
-      appendLog("program: upload complete, flashing started");
+      logActivity("program: upload complete, flashing started");
     } catch (e) {
-      appendLog(`program: ${e instanceof Error ? e.message : "failed"}`);
+      logActivity(`program: ${e instanceof Error ? e.message : "failed"}`);
     } finally {
       setBusy(false);
     }
@@ -202,60 +204,16 @@ export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBac
         </div>
       </div>
 
-      {/* Debug console */}
-      <div className="panel">
-        <div className="panel-header">
-          <span className="panel-title">Debug console</span>
-          <div className="row">
-            <select
-              value={debugBaud}
-              onChange={(e) => setDebugBaud(Number(e.target.value))}
-              style={{ width: "auto", padding: "3px 6px", fontSize: 10 }}
-              disabled={debugActive}
-            >
-              {BAUD_RATES.map((b) => <option key={b} value={b}>{b}</option>)}
-            </select>
-            {!debugActive ? (
-              <button disabled={busy || !connected} onClick={() => { runCmd("debug_start", { baud: debugBaud }); setDebugActive(true); }}>
-                Start
-              </button>
-            ) : (
-              <button className="danger" disabled={busy} onClick={() => { runCmd("debug_stop"); setDebugActive(false); }}>
-                Stop
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="console" ref={consoleRef}>
-          {log.map((l, i) => (
-            <div className="console-line" key={i}>
-              <span className="console-time">{l.time}</span>
-              <span className="console-msg">{l.text}</span>
-            </div>
-          ))}
-        </div>
-        <div className="row" style={{ padding: "8px 12px", borderTop: "1px solid var(--border)" }}>
-          <input
-            style={{ flex: 1 }}
-            placeholder="Send to target…"
-            value={debugText}
-            disabled={!debugActive}
-            onChange={(e) => setDebugText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && debugText.trim()) {
-                runCmd("debug_send", { text: debugText });
-                setDebugText("");
-              }
-            }}
-          />
-          <button
-            disabled={!debugActive || !debugText.trim()}
-            onClick={() => { runCmd("debug_send", { text: debugText }); setDebugText(""); }}
-          >
-            Send
-          </button>
-        </div>
-      </div>
+      <ActivityLog lines={activityLog} />
+
+      <DebugConsole
+        lines={debugLog}
+        active={debugActive}
+        disabled={busy || !connected}
+        onStart={(baud) => { runCmd("debug_start", { baud }); setDebugActive(true); }}
+        onStop={() => { runCmd("debug_stop"); setDebugActive(false); }}
+        onSend={(text) => runCmd("debug_send", { text })}
+      />
     </>
   );
 }
