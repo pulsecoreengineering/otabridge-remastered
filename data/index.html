@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OTABridge</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0a0c0a;--bg2:#0f120f;--bg3:#141814;--border:#1e261e;--border2:#2a362a;--green:#39ff6a;--green-dim:#1a7a35;--green-glow:#39ff6a33;--amber:#ffb83f;--amber-dim:rgba(255,184,63,.15);--red:#ff4c4c;--blue:#5b9bd5;--text:#c8dcc8;--text-dim:#5a7a5a;--text-muted:#3a4e3a;--mono:'IBM Plex Mono',monospace}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--mono);font-size:13px;line-height:1.6;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:1000;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.06) 2px,rgba(0,0,0,.06) 4px)}
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:999;background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.45) 100%)}
+.shell{max-width:960px;margin:0 auto;padding:0 20px 48px;min-height:100vh}
+header{display:flex;align-items:center;justify-content:space-between;padding:22px 0 18px;border-bottom:1px solid var(--border);margin-bottom:24px}
+.logo{display:flex;align-items:baseline;gap:10px}
+.logo-mark{font-size:11px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--green);text-shadow:0 0 12px var(--green)}
+.logo-sep{width:1px;height:14px;background:var(--border2);align-self:center}
+.logo-sub{font-size:11px;font-weight:300;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim)}
+.header-status{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-dim);letter-spacing:.06em}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--text-muted);flex-shrink:0;transition:background .3s,box-shadow .3s}
+.dot.online{background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 2s infinite}
+.dot.busy{background:var(--amber);box-shadow:0 0 8px var(--amber);animation:pulse .6s infinite}
+.dot.error{background:var(--red);box-shadow:0 0 8px var(--red)}
+.dot.reconnecting{background:var(--amber);box-shadow:0 0 8px var(--amber);animation:pulse .4s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.ip-bar{display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:10px 14px;background:var(--bg2);border:1px solid var(--border);border-radius:3px}
+.ip-label{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-dim);flex-shrink:0}
+.ip-input{flex:1;background:transparent;border:none;border-bottom:1px solid var(--border2);color:var(--green);font-family:var(--mono);font-size:13px;padding:2px 6px;outline:none;transition:border-color .2s}
+.ip-input:focus{border-color:var(--green-dim)}
+.ip-input::placeholder{color:var(--text-muted)}
+.api-key-input{flex:0 0 220px}
+.btn-connect{padding:5px 14px;background:transparent;border:1px solid var(--green-dim);color:var(--green);font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:2px;transition:background .15s,box-shadow .15s;flex-shrink:0}
+.btn-connect:hover{background:var(--green-glow);box-shadow:0 0 10px var(--green-glow)}
+.reconnect-bar{display:none;align-items:center;gap:12px;margin-bottom:16px;padding:10px 14px;background:rgba(255,184,63,.06);border:1px solid rgba(255,184,63,.25);border-radius:3px;font-size:12px;color:var(--amber)}
+.reconnect-bar.show{display:flex}
+.spin{display:inline-block;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.reconnect-countdown{margin-left:auto;font-size:11px;color:var(--text-muted)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+@media(max-width:640px){.grid{grid-template-columns:1fr}}
+.panel{background:var(--bg2);border:1px solid var(--border);border-radius:3px;overflow:hidden}
+.panel-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--bg3)}
+.panel-title{font-size:10px;font-weight:500;letter-spacing:.16em;text-transform:uppercase;color:var(--text-dim)}
+.panel-badge{font-size:10px;color:var(--text-muted);font-weight:300}
+.panel-body{padding:14px}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
+.info-key{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);margin-bottom:2px}
+.info-val{font-size:13px;color:var(--text)}
+.info-val.accent{color:var(--green)}
+.info-val.amber{color:var(--amber)}
+.divider{height:1px;background:var(--border);margin:12px 0}
+
+/* ── DEVICE DETECTION PANEL ── */
+.device-panel{margin-bottom:16px}
+.device-identified{display:none;align-items:center;gap:14px;padding:12px 14px;background:rgba(57,255,106,.04);border:1px solid var(--green-dim);border-radius:3px}
+.device-identified.show{display:flex}
+.device-icon{font-size:22px;flex-shrink:0}
+.device-info{flex:1}
+.device-name{font-size:13px;color:var(--green);font-weight:500}
+.device-meta{font-size:11px;color:var(--text-dim);margin-top:2px}
+.device-badge{font-size:10px;padding:2px 8px;border:1px solid var(--green-dim);border-radius:2px;color:var(--green);flex-shrink:0}
+.device-badge.custom{border-color:var(--amber);color:var(--amber)}
+
+/* Unknown device warning */
+.unknown-device{display:none;padding:14px;background:rgba(255,184,63,.05);border:1px solid rgba(255,184,63,.3);border-radius:3px;margin-bottom:16px}
+.unknown-device.show{display:block}
+.unknown-title{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:500;color:var(--amber);letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px}
+.unknown-sig{font-size:12px;color:var(--text-dim);margin-bottom:12px}
+.override-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px}
+.override-actions{display:flex;gap:10px}
+.save-profile-row{display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+.save-profile-row input{flex:1;background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);font-size:11px;padding:5px 8px;border-radius:2px;outline:none}
+.save-profile-row input:focus{border-color:var(--green-dim)}
+
+.upload-zone{border:1px dashed var(--border2);border-radius:3px;padding:24px 20px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;position:relative}
+.upload-zone:hover,.upload-zone.drag-over{border-color:var(--green-dim);background:var(--green-glow)}
+.upload-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.upload-icon{font-size:20px;margin-bottom:6px;opacity:.4}
+.upload-label{font-size:12px;color:var(--text-dim);letter-spacing:.06em}
+.upload-label span{color:var(--green);text-decoration:underline;text-underline-offset:3px}
+.upload-hint{margin-top:4px;font-size:10px;color:var(--text-muted)}
+.file-loaded{display:none;align-items:center;gap:10px;padding:9px 12px;background:rgba(57,255,106,.05);border:1px solid var(--green-dim);border-radius:3px;margin-top:10px}
+.file-loaded.show{display:flex}
+.file-name{flex:1;font-size:12px;color:var(--green);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-size{font-size:11px;color:var(--text-muted);flex-shrink:0}
+.file-clear{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:0 4px;transition:color .2s}
+.file-clear:hover{color:var(--red)}
+.btn-row{display:flex;gap:10px;margin-top:14px}
+.btn{flex:1;padding:9px 12px;font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;border-radius:2px;cursor:pointer;border:1px solid transparent;transition:all .15s}
+.btn-primary{background:var(--green);color:#000;border-color:var(--green)}
+.btn-primary:hover{box-shadow:0 0 20px rgba(57,255,106,.4)}
+.btn-primary:disabled{background:var(--text-muted);border-color:var(--text-muted);color:var(--bg3);cursor:not-allowed;box-shadow:none}
+.btn-secondary{background:transparent;color:var(--text-dim);border-color:var(--border2)}
+.btn-secondary:hover{border-color:var(--text-dim);color:var(--text)}
+.btn-secondary:disabled{opacity:.3;cursor:not-allowed}
+.btn-danger{background:transparent;color:var(--red);border-color:rgba(255,76,76,.3)}
+.btn-danger:hover{background:rgba(255,76,76,.08);border-color:var(--red)}
+.btn-amber{background:transparent;color:var(--amber);border-color:rgba(255,184,63,.35)}
+.btn-amber:hover{background:var(--amber-dim);border-color:var(--amber)}
+.btn-sm{flex:0;padding:6px 14px}
+.flash-progress{display:none;margin-top:14px}
+.flash-progress.show{display:block}
+.progress-label{display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);letter-spacing:.08em;margin-bottom:6px}
+.progress-track{height:3px;background:var(--border);border-radius:2px;overflow:hidden}
+.progress-fill{height:100%;background:var(--green);box-shadow:0 0 8px var(--green);border-radius:2px;transition:width .25s ease;width:0%}
+.progress-fill.indeterminate{width:35% !important;animation:slide 1.1s ease-in-out infinite}
+@keyframes slide{0%{transform:translateX(-120%)}100%{transform:translateX(380%)}}
+.config-toggle{display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;user-select:none}
+.config-arrow{font-size:9px;color:var(--text-muted);transition:transform .2s}
+.config-arrow.open{transform:rotate(90deg)}
+.config-body{display:none;padding:14px;border-top:1px solid var(--border)}
+.config-body.open{display:block}
+.tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:16px}
+.tab{padding:7px 16px;font-size:10px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--text-muted);cursor:pointer;border:none;background:transparent;font-family:var(--mono);border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .2s,border-color .2s}
+.tab:hover{color:var(--text-dim)}
+.tab.active{color:var(--green);border-bottom-color:var(--green)}
+.tab-content{display:none}
+.tab-content.active{display:block}
+.config-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 20px}
+@media(max-width:480px){.config-grid{grid-template-columns:1fr}}
+.field{display:flex;flex-direction:column;gap:4px}
+.field-label{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted)}
+.field-input{background:var(--bg3);border:1px solid var(--border2);color:var(--text);font-family:var(--mono);font-size:12px;padding:6px 8px;border-radius:2px;outline:none;transition:border-color .2s;width:100%}
+.field-input:focus{border-color:var(--green-dim)}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)}
+.toggle-label{font-size:12px;color:var(--text-dim)}
+.toggle{position:relative;width:32px;height:18px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;inset:0;background:var(--border2);border-radius:10px;cursor:pointer;transition:background .2s}
+.toggle-slider::before{content:'';position:absolute;width:12px;height:12px;background:var(--text-muted);border-radius:50%;left:3px;top:3px;transition:transform .2s,background .2s}
+.toggle input:checked+.toggle-slider{background:var(--green-dim)}
+.toggle input:checked+.toggle-slider::before{transform:translateX(14px);background:var(--green);box-shadow:0 0 6px var(--green)}
+.config-actions{display:flex;gap:10px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+.wifi-info{display:flex;flex-direction:column;gap:4px;margin-bottom:14px;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:2px}
+.wifi-info-row{display:flex;justify-content:space-between;font-size:11px}
+.wifi-info-key{color:var(--text-muted)}
+.wifi-info-val{color:var(--green)}
+.wifi-note{font-size:10px;color:var(--text-muted);margin-top:12px;line-height:1.7}
+
+/* ── PROFILES TABLE ── */
+.profiles-table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:14px}
+.profiles-table th{text-align:left;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);padding:6px 8px;border-bottom:1px solid var(--border)}
+.profiles-table td{padding:7px 8px;border-bottom:1px solid var(--border);color:var(--text-dim);vertical-align:middle}
+.profiles-table tr:last-child td{border-bottom:none}
+.profiles-table tr:hover td{background:var(--bg3)}
+.profile-name{color:var(--text);font-weight:500}
+.profile-sig{color:var(--text-muted);font-size:10px}
+.profile-custom-badge{font-size:9px;padding:1px 5px;border:1px solid var(--amber);border-radius:2px;color:var(--amber);margin-left:6px}
+.profile-builtin-badge{font-size:9px;padding:1px 5px;border:1px solid var(--border2);border-radius:2px;color:var(--text-muted);margin-left:6px}
+.btn-del{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:2px 5px;transition:color .2s}
+.btn-del:hover{color:var(--red)}
+.add-profile-section{padding-top:14px;border-top:1px solid var(--border)}
+.add-profile-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr 1fr 1fr;gap:8px;margin-bottom:10px;align-items:end}
+@media(max-width:700px){.add-profile-grid{grid-template-columns:1fr 1fr 1fr}}
+
+.console-wrap{margin-top:16px}
+.console-header{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:3px 3px 0 0}
+.console-title{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--text-muted)}
+.console-right{display:flex;align-items:center;gap:14px}
+.sse-indicator{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--text-muted)}
+.sse-dot{width:5px;height:5px;border-radius:50%;background:var(--text-muted);flex-shrink:0}
+.sse-dot.live{background:var(--green);box-shadow:0 0 5px var(--green);animation:pulse 2s infinite}
+.btn-clear-log{background:none;border:none;color:var(--text-muted);font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;transition:color .2s}
+.btn-clear-log:hover{color:var(--text-dim)}
+.console{background:var(--bg);border:1px solid var(--border);border-top:none;border-radius:0 0 3px 3px;height:240px;overflow-y:auto;padding:10px 14px;font-size:12px;line-height:1.75;scrollbar-width:thin;scrollbar-color:var(--border2) transparent}
+.log-line{display:flex;gap:10px;opacity:0;animation:fadein .12s forwards}
+@keyframes fadein{to{opacity:1}}
+.log-time{color:var(--text-muted);flex-shrink:0}
+.log-prefix{color:var(--text-muted);margin-right:2px}
+.log-msg{color:var(--text)}
+.log-msg.ok{color:var(--green)}
+.log-msg.warn{color:var(--amber)}
+.log-msg.err{color:var(--red)}
+.log-msg.info{color:var(--blue)}
+.log-msg.dim{color:var(--text-dim)}
+footer{margin-top:32px;padding-top:14px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.footer-left{font-size:10px;color:var(--text-muted);letter-spacing:.08em}
+.footer-right{display:flex;gap:16px}
+.footer-btn{background:none;border:none;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);cursor:pointer;transition:color .2s}
+.footer-btn:hover{color:var(--text-dim)}
+.footer-btn.red:hover{color:var(--red)}
+
+/* ── DEBUG / OTABridge ── */
+.debug-wrap{margin-top:16px;border:1px solid var(--border);border-radius:3px;overflow:hidden;transition:all .2s}
+.debug-wrap.fullscreen{position:fixed;inset:0;z-index:500;margin:0;border-radius:0;display:flex;flex-direction:column}
+.debug-header{display:flex;align-items:center;gap:10px;padding:9px 14px;background:var(--bg3);border-bottom:1px solid var(--border);flex-shrink:0}
+.debug-title{font-size:10px;font-weight:500;letter-spacing:.16em;text-transform:uppercase;color:var(--text-dim);flex:1}
+.debug-baud{background:var(--bg);border:1px solid var(--border2);color:var(--text-dim);font-family:var(--mono);font-size:11px;padding:3px 8px;border-radius:2px;outline:none;width:100px}
+.debug-baud:focus{border-color:var(--green-dim)}
+.debug-indicator{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--text-muted)}
+.debug-dot{width:6px;height:6px;border-radius:50%;background:var(--text-muted);flex-shrink:0;transition:background .3s}
+.debug-dot.live{background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2s infinite}
+.debug-dot.busy{background:var(--amber);box-shadow:0 0 6px var(--amber)}
+.debug-actions{display:flex;gap:6px;align-items:center}
+.dbtn{padding:4px 10px;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;border-radius:2px;cursor:pointer;border:1px solid transparent;transition:all .15s}
+.dbtn-start{background:transparent;color:var(--green);border-color:var(--green-dim)}
+.dbtn-start:hover{background:var(--green-glow)}
+.dbtn-stop{background:transparent;color:var(--red);border-color:rgba(255,76,76,.3)}
+.dbtn-stop:hover{background:rgba(255,76,76,.08)}
+.dbtn-clear{background:transparent;color:var(--text-muted);border-color:var(--border2)}
+.dbtn-clear:hover{color:var(--text-dim);border-color:var(--text-muted)}
+.dbtn-dl{background:transparent;color:var(--text-muted);border-color:var(--border2)}
+.dbtn-dl:hover{color:var(--blue);border-color:var(--blue)}
+.dbtn-fs{background:transparent;color:var(--text-muted);border-color:var(--border2);font-size:12px;padding:3px 8px}
+.dbtn-fs:hover{color:var(--text-dim);border-color:var(--text-muted)}
+.debug-console{background:var(--bg);height:260px;overflow-y:auto;padding:10px 14px;font-size:12px;line-height:1.75;scrollbar-width:thin;scrollbar-color:var(--border2) transparent;flex:1}
+.debug-wrap.fullscreen .debug-console{height:auto}
+.debug-line{display:flex;gap:10px;opacity:0;animation:fadein .1s forwards}
+.dbg-ts{color:var(--text-muted);flex-shrink:0;font-size:11px}
+.dbg-msg{color:var(--text)}
+.dbg-msg.sent{color:var(--amber)}
+.dbg-msg.sys{color:var(--blue)}
+.debug-input-row{display:flex;gap:8px;padding:8px 14px;background:var(--bg3);border-top:1px solid var(--border);flex-shrink:0}
+.debug-input{flex:1;background:var(--bg);border:1px solid var(--border2);color:var(--green);font-family:var(--mono);font-size:12px;padding:6px 10px;border-radius:2px;outline:none;transition:border-color .2s}
+.debug-input:focus{border-color:var(--green-dim)}
+.debug-input::placeholder{color:var(--text-muted)}
+.debug-send{padding:6px 16px;background:transparent;border:1px solid var(--green-dim);color:var(--green);font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:2px;transition:background .15s}
+.debug-send:hover{background:var(--green-glow)}
+.autoscroll-row{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text-muted)}
+.autoscroll-row label{cursor:pointer;display:flex;align-items:center;gap:5px}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header>
+    <div class="logo">
+      <span class="logo-mark">OTABridge</span>
+      <div class="logo-sep"></div>
+      <span class="logo-sub">OTA Flash & Debug Interface</span>
+    </div>
+    <div class="header-status">
+      <div class="dot" id="statusDot"></div>
+      <span id="statusText">Disconnected</span>
+    </div>
+  </header>
+
+  <div class="ip-bar" id="ipBar">
+    <span class="ip-label" id="ipLabel">Device IP</span>
+    <input class="ip-input" id="ipInput" type="text" placeholder="192.168.4.1 or otabridge.local" spellcheck="false"/>
+    <button class="btn-connect" id="btnConnect" onclick="connectDevice()">Connect</button>
+    <span class="ip-label">API Key</span>
+    <input class="ip-input api-key-input" id="apiKeyInput" type="password" placeholder="Device API key" spellcheck="false"/>
+  </div>
+
+  <div class="reconnect-bar" id="reconnectBar">
+    <span class="spin">↻</span>
+    <span id="reconnectMsg">Waiting for device to restart...</span>
+    <span class="reconnect-countdown" id="reconnectCountdown"></span>
+  </div>
+
+  <!-- Device identification result -->
+  <div class="device-panel">
+    <div class="device-identified" id="deviceIdentified">
+      <div class="device-icon">⬡</div>
+      <div class="device-info">
+        <div class="device-name" id="deviceName">—</div>
+        <div class="device-meta" id="deviceMeta">—</div>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <div class="device-badge proto-badge" id="protoBadge" style="display:none">STK500v1</div>
+        <div class="device-badge" id="deviceBadge">Built-in</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Unknown device override panel -->
+  <div class="unknown-device" id="unknownDevice">
+    <div class="unknown-title">⚠ Unknown Device Signature</div>
+    <div class="unknown-sig" id="unknownSig">Signature: —</div>
+    <p style="font-size:11px;color:var(--text-dim);margin-bottom:12px">
+      This signature is not in the profile table. Enter flash parameters manually to proceed, or cancel and add a profile first.
+    </p>
+    <div class="override-grid">
+      <div class="field">
+        <label class="field-label">Flash Size (bytes)</label>
+        <input class="field-input" id="ovFlashSize" type="number" value="32768"/>
+      </div>
+      <div class="field">
+        <label class="field-label">Page Size (bytes)</label>
+        <input class="field-input" id="ovPageSize" type="number" value="128"/>
+      </div>
+      <div class="field">
+        <label class="field-label">Preset</label>
+        <select class="field-input" id="ovPreset" onchange="applyPreset()">
+          <option value="">— select —</option>
+          <option value="32768,128,v1">ATmega328P  (32KB/128B) v1</option>
+          <option value="16384,128,v1">ATmega168   (16KB/128B) v1</option>
+          <option value="262144,256,v2">ATmega2560 (256KB/256B) v2</option>
+          <option value="131072,256,v2">ATmega1280 (128KB/256B) v2</option>
+          <option value="32768,128,v1">ATmega32U4  (32KB/128B) v1</option>
+        </select>
+      </div>
+    </div>
+    <div class="field" style="margin-bottom:12px;max-width:200px">
+      <label class="field-label">Protocol Override</label>
+      <select class="field-input" id="ovProtocol">
+        <option value="v1">STK500v1 — Uno / Nano / Leo</option>
+        <option value="v2">STK500v2 — Mega 2560 / 1280</option>
+      </select>
+    </div>
+    <div class="override-actions">
+      <button class="btn btn-amber btn-sm" onclick="submitOverride()">Flash with these params</button>
+      <button class="btn btn-secondary btn-sm" onclick="cancelOverride()">Cancel</button>
+    </div>
+    <div class="save-profile-row">
+      <span style="font-size:11px;color:var(--text-muted);flex-shrink:0">Save as profile:</span>
+      <input type="text" id="newProfileName" placeholder="e.g. My Custom MCU"/>
+      <input type="text" id="newProfileMCU"  placeholder="MCU (e.g. ATmega328P)" style="max-width:140px"/>
+      <button class="btn btn-secondary btn-sm" onclick="saveUnknownAsProfile()">Save Profile</button>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- Device Info -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Device Info</span>
+        <span class="panel-badge" id="devBadge">—</span>
+      </div>
+      <div class="panel-body">
+        <div class="info-grid">
+          <div><div class="info-key">Chip</div><div class="info-val accent" id="infoChip">—</div></div>
+          <div><div class="info-key">CPU</div><div class="info-val" id="infoCPU">—</div></div>
+          <div><div class="info-key">Free Heap</div><div class="info-val" id="infoHeap">—</div></div>
+          <div><div class="info-key">Flash</div><div class="info-val" id="infoFlash">—</div></div>
+          <div><div class="info-key">WiFi Mode</div><div class="info-val amber" id="infoWifi">—</div></div>
+          <div><div class="info-key">MAC</div><div class="info-val" id="infoMAC" style="font-size:10px">—</div></div>
+        </div>
+        <div class="divider"></div>
+        <div><div class="info-key">Programmer State</div><div class="info-val" id="infoStatus">—</div></div>
+      </div>
+    </div>
+
+    <!-- Flash Panel -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Flash</span>
+        <span class="panel-badge" id="flashBadge">No file</span>
+      </div>
+      <div class="panel-body">
+        <div class="upload-zone" id="dropZone">
+          <input type="file" id="hexFileInput" accept=".hex" onchange="handleFileSelect(event)"/>
+          <div class="upload-icon">⬡</div>
+          <div class="upload-label">Drop <span>.hex file</span> or click to browse</div>
+          <div class="upload-hint">Intel HEX · Multi-target</div>
+        </div>
+        <div class="file-loaded" id="fileLoaded">
+          <span class="file-name" id="fileName">—</span>
+          <span class="file-size" id="fileSize">—</span>
+          <button class="file-clear" onclick="clearFile()">✕</button>
+        </div>
+        <div class="btn-row" style="margin-bottom:6px;align-items:center;gap:8px">
+          <label style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);white-space:nowrap">Protocol</label>
+          <select id="protocolSelect" style="background:var(--bg);border:1px solid var(--border2);color:var(--green);font-family:var(--mono);font-size:12px;padding:5px 8px;border-radius:2px;flex:1">
+            <option value="auto">Auto (v2 → v1 fallback)</option>
+            <option value="v1">STK500v1 — Uno / Nano / Pro Mini</option>
+            <option value="v2">STK500v2 — Mega 2560 / 1280</option>
+          </select>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-secondary" id="btnUpload" onclick="uploadHex()" disabled>Upload</button>
+          <button class="btn btn-primary"   id="btnFlash"  onclick="flashArduino()" disabled>Flash</button>
+        </div>
+        <div class="flash-progress" id="flashProgress">
+          <div class="progress-label">
+            <span id="progressLabel">Initialising...</span>
+            <span id="progressPct"></span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill indeterminate" id="progressFill"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Config Panel (tabbed) -->
+  <div class="panel">
+    <div class="panel-header config-toggle" onclick="toggleConfig()">
+      <span class="panel-title">Config &amp; Profiles</span>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="panel-badge" id="cfgBadge">115200 baud</span>
+        <span class="config-arrow" id="cfgArrow">▶</span>
+      </div>
+    </div>
+    <div class="config-body" id="configBody">
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab('programmer',this)">Programmer</button>
+        <button class="tab"        onclick="switchTab('wifi',this)">WiFi</button>
+        <button class="tab"        onclick="switchTab('profiles',this);loadProfilesTab()">Device Profiles</button>
+      </div>
+
+      <!-- Programmer tab -->
+      <div class="tab-content active" id="tab-programmer">
+        <div class="config-grid">
+          <div class="field"><label class="field-label">Baud Rate</label><input class="field-input" id="cfgBaud" type="number" value="115200"/></div>
+          <div class="field"><label class="field-label">Reset Pin</label><input class="field-input" id="cfgResetPin" type="number" value="4"/></div>
+          <div class="field"><label class="field-label">Reset Pulse (ms)</label><input class="field-input" id="cfgResetPulse" type="number" value="100"/></div>
+          <div class="field"><label class="field-label">Bootloader Wait (ms)</label><input class="field-input" id="cfgBootWait" type="number" value="750"/></div>
+          <div class="field"><label class="field-label">Sync Attempts</label><input class="field-input" id="cfgSyncAttempts" type="number" value="20"/></div>
+          <div class="field"><label class="field-label">Response Timeout (ms)</label><input class="field-input" id="cfgTimeout" type="number" value="1000"/></div>
+        </div>
+        <div class="divider"></div>
+        <div class="toggle-row">
+          <span class="toggle-label">Enable Verification</span>
+          <label class="toggle"><input type="checkbox" id="cfgVerify" checked/><span class="toggle-slider"></span></label>
+        </div>
+      </div>
+
+      <!-- WiFi tab -->
+      <div class="tab-content" id="tab-wifi">
+        <div class="wifi-info">
+          <div class="wifi-info-row"><span class="wifi-info-key">Current IP</span><span class="wifi-info-val" id="wifiCurrentIP">—</span></div>
+          <div class="wifi-info-row"><span class="wifi-info-key">Mode</span><span class="wifi-info-val" id="wifiCurrentMode">—</span></div>
+        </div>
+        <div id="staFields">
+          <div class="config-grid">
+            <div class="field"><label class="field-label">WiFi SSID</label><input class="field-input" id="cfgWifiSSID" type="text" placeholder="Your network"/></div>
+            <div class="field"><label class="field-label">WiFi Password</label><input class="field-input" id="cfgWifiPassword" type="password" placeholder="leave blank to keep current"/></div>
+          </div>
+        </div>
+        <p class="wifi-note">⚠ WiFi credential changes take effect after a device restart.</p>
+      </div>
+
+      <!-- Device Profiles tab -->
+      <div class="tab-content" id="tab-profiles">
+        <table class="profiles-table" id="profilesTable">
+          <thead>
+            <tr>
+              <th>Name</th><th>MCU</th><th>Signature</th><th>Flash</th><th>Page</th><th>Boot Wait</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="profilesBody">
+            <tr><td colspan="7" style="color:var(--text-muted);text-align:center;padding:20px">Loading profiles...</td></tr>
+          </tbody>
+        </table>
+
+        <div class="add-profile-section">
+          <div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-muted);margin-bottom:10px">Add Custom Profile</div>
+          <div class="add-profile-grid">
+            <div class="field"><label class="field-label">Name</label><input class="field-input" id="apName" type="text" placeholder="My Device"/></div>
+            <div class="field"><label class="field-label">MCU</label><input class="field-input" id="apMCU" type="text" placeholder="ATmegaXXX"/></div>
+            <div class="field"><label class="field-label">Sig 0</label><input class="field-input" id="apSig0" type="text" placeholder="0x1E" maxlength="4"/></div>
+            <div class="field"><label class="field-label">Sig 1</label><input class="field-input" id="apSig1" type="text" placeholder="0x95" maxlength="4"/></div>
+            <div class="field"><label class="field-label">Sig 2</label><input class="field-input" id="apSig2" type="text" placeholder="0x0F" maxlength="4"/></div>
+            <div class="field"><label class="field-label">Flash (B)</label><input class="field-input" id="apFlash" type="number" value="32768"/></div>
+            <div class="field"><label class="field-label">Page (B)</label><input class="field-input" id="apPage" type="number" value="128"/></div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <div class="field" style="flex:0 0 120px">
+              <label class="field-label">Boot Wait (ms)</label>
+              <input class="field-input" id="apBootWait" type="number" value="750"/>
+            </div>
+            <button class="btn btn-secondary btn-sm" style="margin-top:14px" onclick="addProfile()">Add Profile</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="config-actions">
+        <button class="btn btn-secondary btn-sm" onclick="fetchConfig()">Reload</button>
+        <button class="btn btn-primary btn-sm"   onclick="saveConfig()">Save</button>
+        <button class="btn btn-danger btn-sm" style="margin-left:auto" onclick="resetConfig()">Reset Defaults</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Console -->
+  <div class="console-wrap">
+    <div class="console-header">
+      <span class="console-title">// Console</span>
+      <div class="console-right">
+        <div class="sse-indicator">
+          <div class="sse-dot" id="sseDot"></div>
+          <span id="sseStatus">SSE off</span>
+        </div>
+        <button class="btn-clear-log" onclick="clearLog()">Clear</button>
+      </div>
+    </div>
+    <div class="console" id="console"></div>
+  </div>
+
+  <!-- OTABridge Debug Console -->
+  <div class="debug-wrap" id="debugWrap">
+    <div class="debug-header">
+      <span class="debug-title">⬡ OTABridge — Remote Console</span>
+      <div class="debug-indicator">
+        <div class="debug-dot" id="debugDot"></div>
+        <span id="debugStatus">Stopped</span>
+      </div>
+      <select class="debug-baud" id="debugBaud">
+        <option value="9600" selected>9600</option>
+        <option value="19200">19200</option>
+        <option value="38400">38400</option>
+        <option value="57600">57600</option>
+        <option value="115200">115200</option>
+        <option value="230400">230400</option>
+        <option value="500000">500000</option>
+      </select>
+      <div class="debug-actions">
+        <button class="dbtn dbtn-start" id="btnDebugStart" onclick="debugStart()">Start</button>
+        <button class="dbtn dbtn-stop"  id="btnDebugStop"  onclick="debugStop()" style="display:none">Stop</button>
+        <div class="autoscroll-row">
+          <label><input type="checkbox" id="debugAutoscroll" checked> Autoscroll</label>
+        </div>
+        <button class="dbtn dbtn-dl"   onclick="debugDownload()" title="Download log">↓ Log</button>
+        <button class="dbtn dbtn-clear" onclick="debugClear()">Clear</button>
+        <button class="dbtn dbtn-fs"   onclick="debugToggleFullscreen()" id="btnFs" title="Fullscreen">⛶</button>
+      </div>
+    </div>
+    <div class="debug-console" id="debugConsole"></div>
+    <div class="debug-input-row">
+      <input class="debug-input" id="debugInput" type="text"
+             placeholder="Send command to Arduino... (Enter to send)"
+             onkeydown="if(event.key==='Enter')debugSend()"/>
+      <button class="debug-send" onclick="debugSend()">Send</button>
+    </div>
+  </div>
+
+  <footer>
+    <span class="footer-left">PulseCore Engineering · OTABridge v1.0.0</span>
+    <div class="footer-right">
+      <button class="footer-btn" onclick="fetchInfo()">Refresh Info</button>
+      <button class="footer-btn red" onclick="restartDevice()">Restart Device</button>
+    </div>
+  </footer>
+</div>
+
+<script>
+let baseURL='',connected=false,hexContent=null,hexUploaded=false,sseSource=null;
+
+// ── Auto-connect when served from ESP32 ──────────────
+// If the page is loaded from the ESP32 itself (not file:// or localhost),
+// use relative URLs and connect automatically on load.
+const servedFromDevice = (
+    window.location.hostname !== 'localhost' &&
+    window.location.hostname !== '127.0.0.1' &&
+    window.location.protocol !== 'file:'
+);
+
+window.addEventListener('load', () => {
+    const keyInput = document.getElementById('apiKeyInput');
+    keyInput.value = localStorage.getItem('otabridge_api_key') || '';
+    keyInput.addEventListener('input', () => {
+        setApiKey(keyInput.value);
+    });
+    if (servedFromDevice) {
+        baseURL = '';
+        document.getElementById('ipLabel').style.display = 'none';
+        document.getElementById('ipInput').style.display = 'none';
+        document.getElementById('btnConnect').style.display = 'none';
+        log('Served from device - connecting...', 'dim');
+        connectDevice(true);
+    } else {
+        document.getElementById('ipInput').value = '192.168.4.1';
+    }
+});
+let reconnecting=false,reconnectTimer=null,reconnectAttempts=0;
+const MAX_RECONNECT=30;
+let lastDetectedSig='';
+let sseReconnectTimer=null;
+let statusPollTimer=null;
+let isBusy=false;
+
+function setApiKey(value){
+  const v=String(value||'').trim();
+  localStorage.setItem('otabridge_api_key', v);
+  const top=document.getElementById('apiKeyInput');
+  if(top && top.value!==v) top.value=v;
+}
+
+function getApiKey(){
+  const fromStore=localStorage.getItem('otabridge_api_key');
+  if(fromStore && fromStore.trim()) return fromStore.trim();
+  const el=document.getElementById('apiKeyInput');
+  return (el&&el.value.trim()) || '';
+}
+function authHeaders(headers={}){
+  const h={...headers};
+  const key=getApiKey();
+  if(key) h['X-API-Key']=key;
+  return h;
+}
+
+function log(msg,type=''){
+  const c=document.getElementById('console'),ts=new Date().toTimeString().slice(0,8);
+  const row=document.createElement('div');row.className='log-line';
+  const t=document.createElement('span');t.className='log-time';t.textContent=ts;
+  const m=document.createElement('span');m.className='log-msg '+type;
+  const p=document.createElement('span');p.className='log-prefix';p.textContent='>';
+  m.appendChild(p);
+  m.appendChild(document.createTextNode(' '+String(msg)));
+  row.appendChild(t);row.appendChild(m);
+  c.appendChild(row);c.scrollTop=c.scrollHeight;
+}
+function clearLog(){document.getElementById('console').innerHTML='';log('Console cleared','dim');}
+function setStatus(cls,txt){document.getElementById('statusDot').className='dot '+cls;document.getElementById('statusText').textContent=txt;}
+
+function connectSSE(){
+  if(sseSource){sseSource.close();sseSource=null;}
+  if(sseReconnectTimer){clearTimeout(sseReconnectTimer);sseReconnectTimer=null;}
+  sseSource=new EventSource(baseURL+'/api/progress');
+  sseSource.onopen=()=>{
+    document.getElementById('sseDot').className='sse-dot live';
+    document.getElementById('sseStatus').textContent='SSE live';
+    log('Live stream connected','dim');
+    // Stop polling — SSE is alive
+    stopStatusPoll();
+  };
+  sseSource.onerror=()=>{
+    document.getElementById('sseDot').className='sse-dot';
+    document.getElementById('sseStatus').textContent='SSE off';
+    // If we're mid-flash, start polling so we don't miss completion
+    if(isBusy) startStatusPoll();
+    // Auto-reconnect SSE after 2s
+    if(connected && !sseReconnectTimer){
+      sseReconnectTimer=setTimeout(()=>{
+        sseReconnectTimer=null;
+        if(connected) connectSSE();
+      }, 2000);
+    }
+  };
+
+  sseSource.addEventListener('log',e=>{
+    try{const d=JSON.parse(e.data);log(d.msg,d.type||'');}catch(_){}
+  });
+  sseSource.addEventListener('progress',e=>{
+    try{
+      const d=JSON.parse(e.data);
+      const fill=document.getElementById('progressFill'),lbl=document.getElementById('progressLabel'),pct=document.getElementById('progressPct');
+      fill.classList.remove('indeterminate');
+      if(d.total>0){const p=Math.round(d.page/d.total*100);fill.style.width=p+'%';pct.textContent=p+'%';}
+      lbl.textContent=d.label||'';
+    }catch(_){}
+  });
+  sseSource.addEventListener('state',e=>{
+    try{
+      const s=JSON.parse(e.data).state;
+      const fill=document.getElementById('progressFill'),prog=document.getElementById('flashProgress');
+      if(s==='loading'||s==='entering_progmode'){prog.classList.add('show');fill.classList.add('indeterminate');setStatus('busy','Programming...');setBusy(true);isBusy=true;}
+      if(s==='programming'){fill.classList.remove('indeterminate');setStatus('busy','Writing pages...');}
+      if(s==='awaiting_override'){fill.classList.remove('indeterminate');prog.classList.remove('show');setBusy(false);isBusy=false;stopStatusPoll();setStatus('error','Unknown device');}
+      if(s==='success'){fill.classList.remove('indeterminate');fill.style.width='100%';setStatus('online','Flash OK');setBusy(false);isBusy=false;stopStatusPoll();hexUploaded=false;updateButtons();setTimeout(()=>{prog.classList.remove('show');fill.style.width='0%';},4000);}
+      if(s==='error'){fill.classList.remove('indeterminate');fill.style.width='0%';setStatus('error','Flash failed');setBusy(false);isBusy=false;stopStatusPoll();updateButtons();setTimeout(()=>prog.classList.remove('show'),3000);}
+      if(s==='idle'){document.getElementById('unknownDevice').classList.remove('show');isBusy=false;stopStatusPoll();}
+      document.getElementById('infoStatus').textContent=s;
+    }catch(_){}
+  });
+
+  // Device detection event
+  sseSource.addEventListener('device',e=>{
+    try{
+      const d=JSON.parse(e.data);
+      if(d.found){
+        document.getElementById('unknownDevice').classList.remove('show');
+        document.getElementById('deviceIdentified').classList.add('show');
+        document.getElementById('deviceName').textContent=d.name;
+        document.getElementById('deviceMeta').textContent=
+          d.mcu+' · '+fmtBytes(d.flashSize)+' flash · '+d.pageSize+'B pages · sig '+d.sig;
+        const badge=document.getElementById('deviceBadge');
+        badge.textContent=d.custom?'Custom':'Built-in';
+        badge.className='device-badge'+(d.custom?' custom':'');
+        // Show protocol badge — will be updated on next status poll
+        const pb=document.getElementById('protoBadge');
+        pb.style.display='';
+        pb.textContent='detecting…';
+        log('Target identified: '+d.name+' ('+d.mcu+')','ok');
+      } else {
+        lastDetectedSig=d.sig;
+        document.getElementById('deviceIdentified').classList.remove('show');
+        document.getElementById('unknownSig').textContent='Detected signature: '+d.sig;
+        document.getElementById('unknownDevice').classList.add('show');
+        document.getElementById('ovFlashSize').value=32768;
+        document.getElementById('ovPageSize').value=128;
+        log('Unknown device signature: '+d.sig,'warn');
+        log('Manual override required — see warning panel above','warn');
+      }
+    }catch(_){}
+  });
+}
+function disconnectSSE(){if(sseSource){sseSource.close();sseSource=null;}document.getElementById('sseDot').className='sse-dot';document.getElementById('sseStatus').textContent='SSE off';}
+
+async function connectDevice(auto=false){
+  if (!auto) {
+      const ip=document.getElementById('ipInput').value.trim();
+      if(!ip){log('Enter IP first','warn');return;}
+      baseURL='http://'+ip;
+      log('Connecting to '+baseURL+' ...','info');
+  }
+  setStatus('busy','Connecting...');
+  try{await fetchInfo();await fetchStatus();await fetchConfig();connected=true;setStatus('online','Connected');log('Connection established','ok');connectSSE();updateButtons();}
+  catch(e){setStatus('error','Unreachable');log('Failed: '+e.message,'err');connected=false;updateButtons();}
+}
+
+function startReconnect(){reconnecting=true;reconnectAttempts=0;connected=false;disconnectSSE();updateButtons();document.getElementById('reconnectBar').classList.add('show');setStatus('reconnecting','Reconnecting...');doReconnect();}
+function doReconnect(){
+  if(!reconnecting)return;
+  if(reconnectAttempts>=MAX_RECONNECT){stopReconnect(false);log('Reconnect timed out','err');setStatus('error','Timeout');return;}
+  reconnectAttempts++;document.getElementById('reconnectCountdown').textContent=(MAX_RECONNECT-reconnectAttempts)+'s';
+  fetch(baseURL+'/api/info',{mode:'cors'}).then(r=>r.json()).then(async()=>{
+    stopReconnect(true);log('Device back online','ok');await fetchInfo();await fetchConfig();
+    connected=true;setStatus('online','Reconnected');connectSSE();updateButtons();
+  }).catch(()=>{reconnectTimer=setTimeout(doReconnect,2000);});
+}
+function stopReconnect(ok){reconnecting=false;if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null;}document.getElementById('reconnectBar').classList.remove('show');if(!ok){connected=false;updateButtons();}}
+
+async function apiFetch(path,opts={}){const r=await fetch(baseURL+path,{...opts,mode:'cors',headers:authHeaders(opts.headers||{})});if(!r.ok){let msg='HTTP '+r.status;try{const d=await r.json();if(d.message)msg+=': '+d.message;}catch(_){}throw new Error(msg);}return r.json();}
+
+async function fetchInfo(){
+  const d=await apiFetch('/api/info');
+  document.getElementById('infoChip').textContent=d.chipModel||'—';
+  document.getElementById('infoCPU').textContent=d.cpuFreq?d.cpuFreq+' MHz':'—';
+  document.getElementById('infoHeap').textContent=d.freeHeap?fmtBytes(d.freeHeap):'—';
+  document.getElementById('infoFlash').textContent=d.flashSize?fmtBytes(d.flashSize):'—';
+  document.getElementById('infoWifi').textContent=d.wifiMode||'—';
+  document.getElementById('infoMAC').textContent=d.macAddress||'—';
+  document.getElementById('devBadge').textContent=d.version?'v'+d.version:'—';
+  document.getElementById('wifiCurrentIP').textContent=d.ipAddress||'—';
+  document.getElementById('wifiCurrentMode').textContent=d.wifiMode||'—';
+  log('Device: '+(d.chipModel||'')+' @ '+(d.cpuFreq||'')+' MHz','dim');
+}
+async function fetchStatus(){
+  const d=await apiFetch('/api/status');
+  document.getElementById('infoStatus').textContent=d.state||'—';
+  if(d.hexLoaded) hexUploaded=true;
+  if(d.detectedProtocol && d.detectedProtocol!=='unknown'){
+    const pb=document.getElementById('protoBadge');
+    pb.style.display='';
+    pb.textContent=d.detectedProtocol;
+    pb.style.color=d.detectedProtocol==='STK500v2'?'var(--amber)':'var(--green)';
+    pb.style.borderColor=d.detectedProtocol==='STK500v2'?'rgba(255,184,63,.4)':'var(--green-dim)';
+  }
+}
+async function fetchConfig(){
+  const d=await apiFetch('/api/config');
+  document.getElementById('cfgBaud').value=d.baudRate||115200;
+  document.getElementById('cfgResetPin').value=d.resetPin??4;
+  document.getElementById('cfgResetPulse').value=d.resetPulseMs||100;
+  document.getElementById('cfgBootWait').value=d.bootloaderWaitMs||750;
+  document.getElementById('cfgSyncAttempts').value=d.syncAttempts||20;
+  document.getElementById('cfgTimeout').value=d.responseTimeoutMs||1000;
+  document.getElementById('cfgVerify').checked=d.enableVerification!==false;
+  document.getElementById('cfgWifiSSID').value=d.wifiSSID||'';
+  document.getElementById('cfgBadge').textContent=(d.baudRate||115200)+' baud';
+  log('Config loaded','dim');
+}
+async function saveConfig(){
+  if(!connected){log('Not connected','warn');return;}
+  const p={baudRate:parseInt(document.getElementById('cfgBaud').value),resetPin:parseInt(document.getElementById('cfgResetPin').value),resetPulseMs:parseInt(document.getElementById('cfgResetPulse').value),bootloaderWaitMs:parseInt(document.getElementById('cfgBootWait').value),syncAttempts:parseInt(document.getElementById('cfgSyncAttempts').value),responseTimeoutMs:parseInt(document.getElementById('cfgTimeout').value),enableVerification:document.getElementById('cfgVerify').checked,wifiSSID:document.getElementById('cfgWifiSSID').value,wifiPassword:document.getElementById('cfgWifiPassword').value};
+  if(!p.wifiPassword)delete p.wifiPassword;
+  try{await apiFetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});document.getElementById('cfgBadge').textContent=p.baudRate+' baud';log('Config saved','ok');}
+  catch(e){log('Save failed: '+e.message,'err');}
+}
+async function resetConfig(){if(!connected){log('Not connected','warn');return;}if(!confirm('Reset to factory defaults?'))return;try{await apiFetch('/api/config/reset',{method:'POST'});log('Config reset','warn');await fetchConfig();}catch(e){log('Reset failed: '+e.message,'err');}}
+
+// ── PROFILES ──────────────────────────────────────────
+async function loadProfilesTab(){
+  if(!connected){document.getElementById('profilesBody').innerHTML='<tr><td colspan="7" style="color:var(--text-muted);text-align:center;padding:20px">Not connected</td></tr>';return;}
+  try{
+    const profiles=await apiFetch('/api/profiles');
+    const tbody=document.getElementById('profilesBody');
+    if(!profiles.length){tbody.innerHTML='<tr><td colspan="7" style="color:var(--text-muted);text-align:center;padding:20px">No profiles</td></tr>';return;}
+    tbody.innerHTML=profiles.map(p=>`
+      <tr>
+        <td><span class="profile-name">${p.name}</span>
+            <span class="${p.custom?'profile-custom-badge':'profile-builtin-badge'}">${p.custom?'custom':'built-in'}</span></td>
+        <td>${p.mcu}</td>
+        <td class="profile-sig">${p.signature}</td>
+        <td>${fmtBytes(p.flashSize)}</td>
+        <td>${p.pageSize}B</td>
+        <td>${p.bootWaitMs}ms</td>
+        <td>${p.custom?`<button class="btn-del" onclick="deleteProfile(${p.index})" title="Delete">✕</button>`:''}</td>
+      </tr>`).join('');
+  }catch(e){log('Failed to load profiles: '+e.message,'err');}
+}
+
+async function addProfile(){
+  if(!connected){log('Not connected','warn');return;}
+  const parseHex=s=>parseInt(s.replace('0x','').replace('0X',''),16)||0;
+  const p={name:document.getElementById('apName').value.trim(),mcu:document.getElementById('apMCU').value.trim(),sig0:parseHex(document.getElementById('apSig0').value),sig1:parseHex(document.getElementById('apSig1').value),sig2:parseHex(document.getElementById('apSig2').value),flashSize:parseInt(document.getElementById('apFlash').value),pageSize:parseInt(document.getElementById('apPage').value),bootWaitMs:parseInt(document.getElementById('apBootWait').value)};
+  if(!p.name||!p.mcu){log('Name and MCU required','warn');return;}
+  try{await apiFetch('/api/profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});log('Profile added: '+p.name,'ok');loadProfilesTab();}
+  catch(e){log('Add profile failed: '+e.message,'err');}
+}
+
+async function deleteProfile(idx){
+  if(!confirm('Delete this custom profile?'))return;
+  try{await apiFetch('/api/profiles?index='+idx,{method:'DELETE'});log('Profile deleted','warn');loadProfilesTab();}
+  catch(e){log('Delete failed: '+e.message,'err');}
+}
+
+// ── UNKNOWN DEVICE OVERRIDE ──────────────────────────
+function applyPreset(){
+  const val=document.getElementById('ovPreset').value;
+  if(!val)return;
+  const parts=val.split(',');
+  document.getElementById('ovFlashSize').value=parts[0];
+  document.getElementById('ovPageSize').value=parts[1];
+  if(parts[2]) document.getElementById('ovProtocol').value=parts[2];
+}
+
+async function submitOverride(){
+  if(!connected){log('Not connected','warn');return;}
+  const protocol=document.getElementById('ovProtocol').value||'v1';
+  const payload={
+    flashSize:parseInt(document.getElementById('ovFlashSize').value),
+    pageSize:parseInt(document.getElementById('ovPageSize').value),
+    protocol
+  };
+  log('Submitting manual override: flash='+fmtBytes(payload.flashSize)+' page='+payload.pageSize+'B protocol=STK500'+protocol,'warn');
+  try{
+    await apiFetch('/api/override',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    document.getElementById('unknownDevice').classList.remove('show');
+    document.getElementById('flashProgress').classList.add('show');
+    document.getElementById('progressFill').classList.add('indeterminate');
+    document.getElementById('progressLabel').textContent='Flashing with manual params...';
+    setBusy(true);setStatus('busy','Flashing...');
+  }catch(e){log('Override failed: '+e.message,'err');}
+}
+
+async function cancelOverride(){
+  try{await apiFetch('/api/cancel',{method:'POST'});}catch(_){}
+  document.getElementById('unknownDevice').classList.remove('show');
+  setBusy(false);updateButtons();setStatus('online','Connected');
+  log('Operation cancelled','warn');
+}
+
+async function saveUnknownAsProfile(){
+  if(!connected){log('Not connected','warn');return;}
+  const name=document.getElementById('newProfileName').value.trim();
+  const mcu=document.getElementById('newProfileMCU').value.trim();
+  if(!name||!mcu){log('Name and MCU required to save profile','warn');return;}
+  const parseHex=s=>parseInt(s.replace('0x ','').split(' ').join('').replace('0x',''),16)||0;
+  const parts=lastDetectedSig.replace(/0x/gi,'').trim().split(/\s+/);
+  const p={name,mcu,sig0:parseInt(parts[0],16)||0,sig1:parseInt(parts[1],16)||0,sig2:parseInt(parts[2],16)||0,flashSize:parseInt(document.getElementById('ovFlashSize').value),pageSize:parseInt(document.getElementById('ovPageSize').value),bootWaitMs:750};
+  try{await apiFetch('/api/profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});log('Profile saved: '+name,'ok');document.getElementById('newProfileName').value='';document.getElementById('newProfileMCU').value='';}
+  catch(e){log('Save profile failed: '+e.message,'err');}
+}
+
+// ── FILE / FLASH ──────────────────────────────────────
+function handleFileSelect(e){const f=e.target.files[0];if(f)loadFile(f);}
+function loadFile(file){
+  const r=new FileReader();
+  r.onload=e=>{
+    hexContent=e.target.result;hexUploaded=false;
+    document.getElementById('deviceIdentified').classList.remove('show');
+    document.getElementById('unknownDevice').classList.remove('show');
+    document.getElementById('fileName').textContent=file.name;
+    document.getElementById('fileSize').textContent=fmtBytes(file.size);
+    document.getElementById('fileLoaded').classList.add('show');
+    document.getElementById('flashBadge').textContent=file.name;
+    log('Loaded: '+file.name+' ('+fmtBytes(file.size)+')','ok');updateButtons();
+  };r.readAsText(file);
+}
+function clearFile(){hexContent=null;hexUploaded=false;document.getElementById('hexFileInput').value='';document.getElementById('fileLoaded').classList.remove('show');document.getElementById('flashBadge').textContent='No file';document.getElementById('deviceIdentified').classList.remove('show');document.getElementById('unknownDevice').classList.remove('show');log('File cleared','dim');updateButtons();}
+
+const dz=document.getElementById('dropZone');
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag-over');});
+dz.addEventListener('dragleave',()=>dz.classList.remove('drag-over'));
+dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag-over');const f=e.dataTransfer.files[0];if(f&&f.name.endsWith('.hex'))loadFile(f);else log('Only .hex accepted','warn');});
+
+async function uploadHex(){if(!connected){log('Connect first','warn');return;}if(!hexContent){log('No file','warn');return;}log('Uploading...','info');setStatus('busy','Uploading...');try{const r=await fetch(baseURL+'/api/upload-hex',{method:'POST',mode:'cors',headers:authHeaders({'Content-Type':'text/plain'}),body:hexContent});const d=await r.json();if(d.success){hexUploaded=true;log('Uploaded — '+fmtBytes(d.size||0),'ok');setStatus('online','Ready to flash');}else{log('Upload failed: '+(d.message||'unknown'),'err');setStatus('online','Connected');}updateButtons();}catch(e){log('Error: '+e.message,'err');setStatus('error','Upload failed');}}
+async function flashArduino(){
+  if(!connected){log('Connect first','warn');return;}if(!hexUploaded){log('Upload hex first','warn');return;}
+  document.getElementById('deviceIdentified').classList.remove('show');
+  document.getElementById('unknownDevice').classList.remove('show');
+  const protocol = document.getElementById('protocolSelect').value;
+  const protoLabel = protocol === 'v1' ? 'STK500v1' : protocol === 'v2' ? 'STK500v2' : 'Auto';
+  log('────────────────────────────────','dim');log(`Starting flash sequence (${protoLabel})...`,'info');
+  document.getElementById('flashProgress').classList.add('show');
+  document.getElementById('progressFill').classList.add('indeterminate');
+  document.getElementById('progressLabel').textContent='Starting...';
+  document.getElementById('progressPct').textContent='';
+  setBusy(true);setStatus('busy','Flashing...');
+  try{const r=await fetch(baseURL+'/api/program?protocol='+protocol,{method:'POST',mode:'cors',headers:authHeaders()});const d=await r.json();if(!d.success){log('Rejected: '+(d.message||'unknown'),'err');setStatus('error','Rejected');setBusy(false);document.getElementById('flashProgress').classList.remove('show');}}
+  catch(e){log('Error: '+e.message,'err');setStatus('error','Error');setBusy(false);document.getElementById('flashProgress').classList.remove('show');}
+}
+async function restartDevice(){if(!connected){log('Not connected','warn');return;}if(!confirm('Restart ESP32?'))return;try{await apiFetch('/api/restart',{method:'POST'});log('Restart sent','warn');}catch(_){log('Restart sent (connection dropped)','dim');}connected=false;disconnectSSE();setStatus('','Disconnected');updateButtons();startReconnect();}
+
+function updateButtons(){document.getElementById('btnUpload').disabled=!connected||!hexContent;document.getElementById('btnFlash').disabled=!connected||!hexUploaded;}
+function setBusy(b){isBusy=b;['btnUpload','btnFlash'].forEach(id=>document.getElementById(id).disabled=b);}
+
+// Status poller — fallback when SSE drops during a flash operation
+function startStatusPoll(){
+  if(statusPollTimer) return; // already running
+  log('SSE dropped — polling for status...','warn');
+  statusPollTimer=setInterval(async()=>{
+    if(!connected) return stopStatusPoll();
+    try{
+      const d=await apiFetch('/api/status');
+      const s=d.state;
+      document.getElementById('infoStatus').textContent=s;
+      const fill=document.getElementById('progressFill'),prog=document.getElementById('flashProgress');
+      if(s==='programming'&&d.totalPages>0){
+        fill.classList.remove('indeterminate');
+        const p=Math.round(d.page/d.totalPages*100);
+        fill.style.width=p+'%';
+        document.getElementById('progressPct').textContent=p+'%';
+        document.getElementById('progressLabel').textContent='Page '+d.page+' / '+d.totalPages;
+      }
+      if(s==='success'){
+        stopStatusPoll();
+        fill.classList.remove('indeterminate');fill.style.width='100%';
+        setStatus('online','Flash OK');setBusy(false);hexUploaded=false;updateButtons();
+        log('Flash complete (recovered via poll)','ok');
+        setTimeout(()=>{prog.classList.remove('show');fill.style.width='0%';},4000);
+      }
+      if(s==='error'){
+        stopStatusPoll();
+        fill.style.width='0%';setStatus('error','Flash failed');
+        setBusy(false);updateButtons();
+        log('Flash failed: '+(d.lastError||'unknown'),'err');
+        setTimeout(()=>prog.classList.remove('show'),3000);
+      }
+      if(s==='idle'||s==='awaiting_override'){stopStatusPoll();setBusy(false);updateButtons();}
+    }catch(_){}
+  }, 1500);
+}
+function stopStatusPoll(){
+  if(statusPollTimer){clearInterval(statusPollTimer);statusPollTimer=null;}
+}
+function toggleConfig(){const b=document.getElementById('configBody'),a=document.getElementById('cfgArrow'),o=b.classList.toggle('open');a.classList.toggle('open',o);}
+function switchTab(name,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));btn.classList.add('active');document.getElementById('tab-'+name).classList.add('active');}
+function fmtBytes(b){if(b>=1048576)return(b/1048576).toFixed(1)+' MB';if(b>=1024)return(b/1024).toFixed(1)+' KB';return b+' B';}
+
+// ── OTABridge Debug Console ───────────────────────────
+let debugSSE       = null;
+let debugLines     = [];
+let debugFullscreen = false;
+let debugActive    = false;   // tracks intent, survives SSE reconnects
+
+function debugLog(msg, cls='') {
+    const c = document.getElementById('debugConsole');
+    const ts = new Date().toTimeString().slice(0,8);
+    const el = document.createElement('div');
+    el.className = 'debug-line';
+    el.innerHTML = `<span class="dbg-ts">${ts}</span><span class="dbg-msg ${cls}">${escHtml(msg)}</span>`;
+    c.appendChild(el);
+    debugLines.push(`[${ts}] ${msg}`);
+    if (document.getElementById('debugAutoscroll').checked)
+        c.scrollTop = c.scrollHeight;
+    // Cap DOM to 2000 lines to keep it snappy
+    while (c.children.length > 2000) c.removeChild(c.firstChild);
+}
+
+function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function debugSetActive(active) {
+    document.getElementById('debugDot').className   = 'debug-dot' + (active ? ' live' : '');
+    document.getElementById('debugStatus').textContent = active ? 'Live' : 'Stopped';
+    document.getElementById('btnDebugStart').style.display = active ? 'none'  : '';
+    document.getElementById('btnDebugStop').style.display  = active ? ''      : 'none';
+}
+
+function connectDebugSSE() {
+    if (debugSSE) { debugSSE.close(); debugSSE = null; }
+    debugSSE = new EventSource(baseURL + '/api/debug/stream');
+    debugSSE.onopen = () => {
+        debugLog('OTABridge stream connected', 'sys');
+        document.getElementById('debugDot').className = 'debug-dot live';
+        document.getElementById('debugStatus').textContent = 'Live';
+    };
+    debugSSE.onerror = () => {
+        document.getElementById('debugDot').className = 'debug-dot';
+        document.getElementById('debugStatus').textContent = 'Reconnecting...';
+        // Auto-reconnect after 2s if debug is still meant to be active
+        if (debugActive) {
+            setTimeout(() => { if (debugActive) connectDebugSSE(); }, 2000);
+        }
+    };
+    // Heartbeat — just keeps connection alive, no UI action needed
+    debugSSE.addEventListener('heartbeat', () => {});
+    debugSSE.addEventListener('line', e => {
+        try {
+            const d = JSON.parse(e.data);
+            debugLog(d.line, d.sent ? 'sent' : '');
+        } catch(_) {}
+    });
+}
+
+async function debugStart() {
+    if (!connected) { log('Connect to device first', 'warn'); return; }
+    const baud = parseInt(document.getElementById('debugBaud').value);
+    try {
+        await apiFetch('/api/debug/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ baud })
+        });
+        debugActive = true;
+        debugSetActive(true);
+        debugLog(`Debug monitor started @ ${baud} baud`, 'sys');
+        connectDebugSSE();
+    } catch(e) { log('Debug start failed: ' + e.message, 'err'); }
+}
+
+async function debugStop() {
+    debugActive = false;
+    try {
+        await apiFetch('/api/debug/stop', { method: 'POST' });
+    } catch(_) {}
+    if (debugSSE) { debugSSE.close(); debugSSE = null; }
+    debugSetActive(false);
+    debugLog('Debug monitor stopped', 'sys');
+}
+
+async function debugSend() {
+    const inp = document.getElementById('debugInput');
+    const cmd = inp.value;
+    if (!cmd) return;
+    inp.value = '';
+    try {
+        await apiFetch('/api/debug/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cmd: cmd + '\n' })
+        });
+    } catch(e) { debugLog('Send failed: ' + e.message, 'sys'); }
+}
+
+function debugClear() {
+    document.getElementById('debugConsole').innerHTML = '';
+    debugLines = [];
+}
+
+function debugDownload() {
+    if (!debugLines.length) { log('No debug log to download', 'warn'); return; }
+    const blob = new Blob([debugLines.join('\n')], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'otabridge_' + new Date().toISOString().slice(0,19).replace(/:/g,'-') + '.txt';
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+function debugToggleFullscreen() {
+    debugFullscreen = !debugFullscreen;
+    const wrap = document.getElementById('debugWrap');
+    const btn  = document.getElementById('btnFs');
+    wrap.classList.toggle('fullscreen', debugFullscreen);
+    btn.textContent = debugFullscreen ? '✕' : '⛶';
+    btn.title = debugFullscreen ? 'Exit fullscreen' : 'Fullscreen';
+    if (debugFullscreen) {
+        document.body.style.overflow = 'hidden';
+        // Focus input for immediate typing
+        document.getElementById('debugInput').focus();
+    } else {
+        document.body.style.overflow = '';
+    }
+}
+
+// Exit fullscreen on Escape
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && debugFullscreen) debugToggleFullscreen();
+});
+
+log('OTABridge v1.0.0 ready', 'ok');
+log('STK500v1 + v2 flashing · remote serial debug', 'dim');
+updateButtons();
+</script>
+
+</body>
+</html>
