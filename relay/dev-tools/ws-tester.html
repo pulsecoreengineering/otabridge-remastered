@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>OTABridge Relay — WS Tester</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d1117;color:#e6edf3;padding:24px;max-width:900px;margin:0 auto}
+  h1{font-size:18px;margin-bottom:4px}
+  .sub{font-size:12px;color:#8b949e;margin-bottom:20px}
+  .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin-bottom:16px}
+  .card h2{font-size:12px;font-weight:600;color:#f0a500;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px}
+  .row{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+  .row label{font-size:11px;color:#8b949e;display:block;margin-bottom:3px}
+  .field{flex:1;min-width:160px}
+  input,select{width:100%;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:7px 9px;color:#e6edf3;font-size:13px;font-family:inherit;outline:none}
+  input:focus,select:focus{border-color:#f0a500}
+  button{background:#21262d;border:1px solid #30363d;border-radius:4px;padding:8px 14px;color:#e6edf3;font-size:12px;cursor:pointer;white-space:nowrap}
+  button:hover{border-color:#f0a500;color:#f0a500}
+  button.primary{background:#f0a500;border:none;color:#0d1117;font-weight:600}
+  button.primary:hover{background:#d4940a;color:#0d1117}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .status{font-size:11px;padding:3px 8px;border-radius:3px;display:inline-block}
+  .status.on{background:rgba(35,134,54,.15);color:#3fb950}
+  .status.off{background:rgba(248,81,73,.1);color:#f85149}
+  .cmds{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  #log{background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:10px;height:320px;overflow-y:auto;font-family:'Courier New',monospace;font-size:12px;white-space:pre-wrap}
+  .log-in{color:#58a6ff}
+  .log-out{color:#3fb950}
+  .log-sys{color:#8b949e}
+  .log-err{color:#f85149}
+</style>
+</head>
+<body>
+<h1>OTABridge Relay — WS Tester</h1>
+<p class="sub">Manual test harness for the app-side WS protocol (subscribe / cmd / status / debug). Not part of the product — a dev tool for exercising the relay directly from a browser.</p>
+
+<div class="card">
+  <h2>1. Connection</h2>
+  <div class="row">
+    <div class="field">
+      <label>Relay base URL</label>
+      <input id="relayUrl" value="https://otabridge-remastered-production.up.railway.app"/>
+    </div>
+  </div>
+  <div class="row">
+    <div class="field">
+      <label>Email</label>
+      <input id="email" value="you@example.com"/>
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input id="password" type="password" value="yourpassword123"/>
+    </div>
+    <div style="align-self:flex-end;display:flex;gap:6px">
+      <button onclick="login()">Log in</button>
+      <button onclick="signup()">Sign up</button>
+    </div>
+  </div>
+  <div class="row">
+    <span id="authStatus" class="status off">not logged in</span>
+  </div>
+</div>
+
+<div class="card">
+  <h2>2. Device</h2>
+  <div class="row">
+    <div class="field">
+      <label>Device ID (full MAC hex — see serial boot log or /api/relay/status)</label>
+      <input id="deviceId" value=""/>
+    </div>
+    <div style="align-self:flex-end">
+      <button onclick="connectWs()">Connect + subscribe</button>
+    </div>
+  </div>
+  <div class="row">
+    <span id="wsStatus" class="status off">disconnected</span>
+  </div>
+  <div class="cmds">
+    <button onclick="sendCmd('status')">status</button>
+    <button onclick="sendCmd('cancel')">cancel</button>
+    <button onclick="sendCmd('restart')">restart</button>
+    <button onclick="sendCmd('debug_start')">debug_start</button>
+    <button onclick="sendCmd('debug_stop')">debug_stop</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <div class="field">
+      <input id="debugText" placeholder="text to send via debug_send"/>
+    </div>
+    <button onclick="sendCmd('debug_send', {text: document.getElementById('debugText').value})">debug_send</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>3. Log</h2>
+  <div id="log"></div>
+</div>
+
+<script>
+let token = null;
+let ws = null;
+let reqCounter = 0;
+
+function log(line, cls) {
+  const el = document.getElementById('log');
+  const time = new Date().toLocaleTimeString();
+  const div = document.createElement('div');
+  div.className = cls || 'log-sys';
+  div.textContent = `[${time}] ${line}`;
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+}
+
+function relayBase() { return document.getElementById('relayUrl').value.replace(/\/$/, ''); }
+
+async function signup() {
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  try {
+    const r = await fetch(relayBase() + '/auth/signup', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({email, password})
+    });
+    const d = await r.json();
+    if (d.token) { setToken(d.token); log('signed up', 'log-sys'); }
+    else log('signup: ' + JSON.stringify(d), 'log-err');
+  } catch (e) { log('signup error: ' + e.message, 'log-err'); }
+}
+
+async function login() {
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  try {
+    const r = await fetch(relayBase() + '/auth/login', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({email, password})
+    });
+    const d = await r.json();
+    if (d.token) { setToken(d.token); log('logged in', 'log-sys'); }
+    else log('login: ' + JSON.stringify(d), 'log-err');
+  } catch (e) { log('login error: ' + e.message, 'log-err'); }
+}
+
+function setToken(t) {
+  token = t;
+  const el = document.getElementById('authStatus');
+  el.textContent = 'logged in';
+  el.className = 'status on';
+}
+
+function connectWs() {
+  if (!token) { log('log in first', 'log-err'); return; }
+  const deviceId = document.getElementById('deviceId').value.trim();
+  if (!deviceId) { log('enter a device ID first', 'log-err'); return; }
+
+  const wsUrl = relayBase().replace(/^http/, 'ws') + '/ws/app?token=' + encodeURIComponent(token);
+  ws = new WebSocket(wsUrl);
+
+  ws.onopen = () => {
+    log('ws open, subscribing to ' + deviceId, 'log-sys');
+    const msg = {type: 'subscribe', deviceId};
+    ws.send(JSON.stringify(msg));
+    log('-> ' + JSON.stringify(msg), 'log-out');
+  };
+  ws.onmessage = (evt) => {
+    log('<- ' + evt.data, 'log-in');
+    try {
+      const d = JSON.parse(evt.data);
+      if (d.type === 'subscribed') {
+        document.getElementById('wsStatus').textContent = 'connected + subscribed';
+        document.getElementById('wsStatus').className = 'status on';
+      }
+    } catch {}
+  };
+  ws.onclose = (evt) => {
+    log('ws closed: ' + evt.code + ' ' + evt.reason, 'log-err');
+    document.getElementById('wsStatus').textContent = 'disconnected';
+    document.getElementById('wsStatus').className = 'status off';
+  };
+  ws.onerror = () => log('ws error', 'log-err');
+}
+
+function sendCmd(action, extra) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) { log('connect first', 'log-err'); return; }
+  const deviceId = document.getElementById('deviceId').value.trim();
+  const requestId = 'req-' + (++reqCounter);
+  const msg = Object.assign({type: 'cmd', deviceId, action, requestId}, extra || {});
+  ws.send(JSON.stringify(msg));
+  log('-> ' + JSON.stringify(msg), 'log-out');
+}
+</script>
+</body>
+</html>

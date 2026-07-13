@@ -104,6 +104,15 @@ device's local SSE streams would fire (same trigger points — see
 `02_runtime_io.inl`), so the relay mirrors the local UI rather than being a
 second source of truth.
 
+### Manual testing: `dev-tools/ws-tester.html`
+
+A standalone HTML page (no build step, no server) for exercising the app
+side of the WS protocol from a real browser — sign up/log in, subscribe to a
+device by ID, fire each `cmd` action, and watch the raw message log. Just
+open the file directly (`file://`); the relay's CORS is permissive enough
+for that to work. Not part of the product — a debugging aid, since there's
+no companion app yet to do this through.
+
 ## Local development
 
 ```bash
