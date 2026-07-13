@@ -41,6 +41,14 @@ export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBac
     if (!token) return;
     const socket = new RelaySocket();
     socketRef.current = socket;
+    // React StrictMode (dev only) mounts this effect, cleans it up, then
+    // mounts it again — closing this exact socket before its connect()
+    // promise settles. Without this guard, that discarded socket's onerror
+    // still fires setConnError() after the *second* (real) socket has
+    // already connected successfully, leaving a stale error on screen next
+    // to a working connection.
+    let cancelled = false;
+    setConnError(null);
 
     const unsubscribe = socket.onMessage((msg: RelayMessage) => {
       if (msg.type === "subscribed") {
@@ -63,10 +71,11 @@ export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBac
     });
 
     socket.connect(token)
-      .then(() => socket.subscribe(deviceId))
-      .catch((e) => setConnError(e.message));
+      .then(() => { if (!cancelled) socket.subscribe(deviceId); })
+      .catch((e) => { if (!cancelled) setConnError(e.message); });
 
     return () => {
+      cancelled = true;
       unsubscribe();
       socket.close();
     };
