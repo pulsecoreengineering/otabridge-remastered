@@ -62,6 +62,23 @@ export const relayApi = {
 
   claimDevice: (code: string): Promise<{ deviceId: string }> =>
     request("/devices/claim", { method: "POST", body: JSON.stringify({ code }) }),
+
+  renameDevice: (deviceId: string, name: string): Promise<{ id: string; name: string }> =>
+    request(`/devices/${encodeURIComponent(deviceId)}/name`, { method: "PATCH", body: JSON.stringify({ name }) }),
+
+  unclaimDevice: (deviceId: string): Promise<{ id: string; unclaimed: boolean }> =>
+    request(`/devices/${encodeURIComponent(deviceId)}`, { method: "DELETE" }),
+
+  getPushPublicKey: (): Promise<{ publicKey: string }> => request("/push/public-key"),
+
+  subscribePush: (sub: PushSubscriptionJSON): Promise<{ subscribed: boolean }> =>
+    request("/push/subscribe", {
+      method: "POST",
+      body: JSON.stringify({ endpoint: sub.endpoint, keys: sub.keys }),
+    }),
+
+  unsubscribePush: (endpoint: string): Promise<{ unsubscribed: boolean }> =>
+    request("/push/subscribe", { method: "DELETE", body: JSON.stringify({ endpoint }) }),
 };
 
 export { ApiError };

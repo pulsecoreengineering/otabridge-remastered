@@ -1,15 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import { verifyAccountToken } from "../auth.js";
-import { prisma } from "../db.js";
+import { ownsDevice } from "../lib/ownership.js";
 import { appSockets, deviceSockets, subscribeAppToDevice, unsubscribeAppSocket } from "./registry.js";
-
-async function ownsDevice(accountId: string, deviceId: string): Promise<boolean> {
-  const link = await prisma.accountDevice.findUnique({
-    where: { accountId_deviceId: { accountId, deviceId } },
-  });
-  return !!link;
-}
 
 // Companion app connects with ?token=<account JWT>. Two message types once
 // connected:
