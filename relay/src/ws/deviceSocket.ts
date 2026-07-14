@@ -10,10 +10,14 @@ import { deviceSockets, broadcastToDeviceSubscribers } from "./registry.js";
 // registered over /devices/register — nothing secret ever crosses the wire.
 //
 // Once authenticated, any message the device sends (status/progress/
-// debug_line/cmd_result) is forwarded verbatim to whichever app sockets are
-// subscribed to it — the relay doesn't interpret the payload, it's a thin
-// pipe. Commands flow the other way via appSocket.ts writing directly to
-// this device's entry in deviceSockets.
+// debug_line/cmd_result) is forwarded to whichever app sockets are
+// subscribed to it, with `deviceId` stamped on before forwarding — a single
+// app session can subscribe to several devices (fleet/bench operations) over
+// one socket, and without deviceId on each push there'd be no way to tell
+// which device a given status/progress/debug_line came from. The relay
+// still doesn't interpret the rest of the payload, just adds this one field.
+// Commands flow the other way via appSocket.ts writing directly to this
+// device's entry in deviceSockets.
 export async function deviceSocketRoute(app: FastifyInstance): Promise<void> {
   app.get("/ws/device", { websocket: true }, (socket: WebSocket) => {
     const nonce = generateChallenge();
@@ -50,9 +54,19 @@ export async function deviceSocketRoute(app: FastifyInstance): Promise<void> {
         return;
       }
 
-      // Post-auth: data-plane push from the device — forward as-is to
-      // whichever app sessions are subscribed to it.
-      broadcastToDeviceSubscribers(deviceId!, raw.toString());
+      // Post-auth: data-plane push from the device — stamp deviceId on and
+      // forward to whichever app sessions are subscribed to it.
+      let payload = raw.toString();
+      try {
+        const parsed = JSON.parse(payload);
+        parsed.deviceId = deviceId;
+        payload = JSON.stringify(parsed);
+      } catch {
+        // Not JSON — forward unchanged rather than drop it; shouldn't happen
+        // given firmware always sends JSON, but this is a thin pipe, not a
+        // strict validator.
+      }
+      broadcastToDeviceSubscribers(deviceId!, payload);
     });
 
     socket.on("close", () => {
