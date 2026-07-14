@@ -111,7 +111,6 @@ extern AsyncWebServer server;
 extern AsyncEventSource events;
 extern AsyncEventSource debugEvents;
 extern volatile ProgrammerState programmerState;
-extern String currentHexData;
 extern String lastError;
 extern int totalPages;
 extern int currentPage;

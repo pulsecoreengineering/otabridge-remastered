@@ -132,7 +132,7 @@ void setupWebServer() {
                              programmerState != STATE_SUCCESS &&
                              programmerState != STATE_ERROR &&
                              programmerState != STATE_AWAITING_OVERRIDE);
-        doc["hexLoaded"]  = currentHexData.length() > 0;
+        doc["hexLoaded"]  = hexIngestSize() > 0;
         doc["page"]       = currentPage;
         doc["totalPages"] = totalPages;
         doc["lastError"]  = lastError;
@@ -357,19 +357,30 @@ void setupWebServer() {
                 addCORS(r); req->send(r); return;
             }
             if (index == 0) {
-                currentHexData = "";
                 activeProfileIndex = -1;
                 manualOverride.active = false;
+                if (!hexIngestBegin()) {
+                    AsyncWebServerResponse* r = req->beginResponse(500,"application/json",
+                        "{\"success\":false,\"message\":\"Failed to open storage for hex data\"}");
+                    addCORS(r); req->send(r); return;
+                }
             }
-            currentHexData += String((const char*)data, len);
+            if (!hexIngestAppend(data, len)) {
+                hexIngestEnd();
+                hexIngestClear();
+                AsyncWebServerResponse* r = req->beginResponse(500,"application/json",
+                    "{\"success\":false,\"message\":\"Storage write failed (out of space?)\"}");
+                addCORS(r); req->send(r); return;
+            }
             if (index + len == total) {
+                hexIngestEnd();
                 programmerState = STATE_IDLE; lastError = "";
                 char buf[80];
                 snprintf(buf, sizeof(buf),
-                    "{\"success\":true,\"size\":%d}", (int)currentHexData.length());
+                    "{\"success\":true,\"size\":%d}", (int)hexIngestSize());
                 AsyncWebServerResponse* r = req->beginResponse(200,"application/json", buf);
                 addCORS(r); req->send(r);
-                Serial.printf("HEX received: %d bytes\n", (int)currentHexData.length());
+                Serial.printf("HEX received: %d bytes\n", (int)hexIngestSize());
             }
         }
     );
@@ -384,7 +395,7 @@ void setupWebServer() {
                 "{\"success\":false,\"message\":\"Already programming\"}");
             addCORS(r); req->send(r); return;
         }
-        if (currentHexData.length() == 0) {
+        if (hexIngestSize() == 0) {
             AsyncWebServerResponse* r = req->beginResponse(400,"application/json",
                 "{\"success\":false,\"message\":\"No hex data loaded\"}");
             addCORS(r); req->send(r); return;
@@ -428,7 +439,7 @@ void setupWebServer() {
                     "{\"success\":false,\"message\":\"Programmer busy\"}");
                 addCORS(r); req->send(r); return;
             }
-            if (currentHexData.length() == 0) {
+            if (hexIngestSize() == 0) {
                 AsyncWebServerResponse* r = req->beginResponse(400,"application/json",
                     "{\"success\":false,\"message\":\"No hex data loaded\"}");
                 addCORS(r); req->send(r); return;

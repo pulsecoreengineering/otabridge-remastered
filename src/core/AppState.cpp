@@ -27,7 +27,6 @@ AsyncEventSource events("/api/progress");
 AsyncEventSource debugEvents("/api/debug/stream");
 
 volatile ProgrammerState programmerState = STATE_IDLE;
-String                   currentHexData  = "";
 String                   lastError       = "";
 int                      totalPages      = 0;
 int                      currentPage     = 0;

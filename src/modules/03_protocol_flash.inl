@@ -514,6 +514,46 @@ public:
     }
 };
 
+// ─── HEX Ingest Storage ──────────────────────────────
+// Backing store for incoming HEX text (local /api/upload-hex chunks or relay
+// program_chunk pieces) — written straight to LittleFS instead of a RAM
+// String. A fully-packed Mega image is ~700KB of hex TEXT; buffering that in
+// a single contiguous heap String either fails outright or fragments the
+// heap badly enough to break everything else sharing it (WiFi, TLS,
+// ArduinoJson). Flash has room (LittleFS gets ~1.3MB of the 4MB partition
+// table here); a contiguous multi-hundred-KB heap block usually doesn't.
+#define HEX_INGEST_PATH "/hexdata.hex"
+static File hexIngestFile;
+
+bool hexIngestBegin() {
+    if (hexIngestFile) hexIngestFile.close();
+    hexIngestFile = LittleFS.open(HEX_INGEST_PATH, "w");
+    return (bool)hexIngestFile;
+}
+
+bool hexIngestAppend(const uint8_t* data, size_t len) {
+    if (!hexIngestFile) return false;
+    return hexIngestFile.write(data, len) == len;
+}
+
+void hexIngestEnd() {
+    if (hexIngestFile) hexIngestFile.close();
+}
+
+size_t hexIngestSize() {
+    if (!LittleFS.exists(HEX_INGEST_PATH)) return 0;
+    File f = LittleFS.open(HEX_INGEST_PATH, "r");
+    if (!f) return 0;
+    size_t sz = f.size();
+    f.close();
+    return sz;
+}
+
+void hexIngestClear() {
+    if (hexIngestFile) hexIngestFile.close();
+    if (LittleFS.exists(HEX_INGEST_PATH)) LittleFS.remove(HEX_INGEST_PATH);
+}
+
 // ─── Globals ─────────────────────────────────────────
 // Defined here — AFTER both class definitions so the types are known.
 STK500Programmer*   programmer       = nullptr;
@@ -524,11 +564,20 @@ FlashProtocol       preferredProtocol = PROTO_UNKNOWN;  // UNKNOWN = auto
 
 // ─── Flash Task ──────────────────────────────────────
 // ── flashTask ────────────────────────────────────────
-// Streaming design: parse HEX into a per-page bitmap (pageHasData)
-// on the first pass, then on the second pass fill one page-sized buffer
-// and flash it immediately — reusing the same buffer for every page.
-// Peak heap: pageSize (256B max) + pageHasData bitmap (128B for Mega).
-// No large contiguous allocation — works for both Uno (32KB) and Mega (256KB).
+// Streaming design, two sequential passes over the staged file on LittleFS
+// (see hexIngestBegin() et al. above) — never the whole hex text in RAM:
+//   Pass 1 (Stage 1 below) validates every line and builds a per-page
+//   presence bitmap (1 bit/page — 128B covers a full Mega) for progress
+//   totals.
+//   Pass 2 (Stage 4 below) walks the file once more and flashes a page the
+//   instant its data is complete, reusing one page-sized buffer for every
+//   page. This relies on toolchain-emitted HEX records arriving in
+//   non-decreasing address order (true for avr-gcc/avrdude/Arduino IDE
+//   output) — it flags an error rather than corrupting a page if it ever
+//   sees an address that would require reopening an already-flushed page.
+// Peak heap: pageSize (256B max) + pageHasData bitmap (128B for Mega) + a
+// handful of short-lived per-line Strings. No large contiguous allocation —
+// works for both Uno (32KB) and Mega (256KB).
 
 void flashTask(void* param) {
     char buf[128];
@@ -568,25 +617,34 @@ void flashTask(void* param) {
         flashTaskHandle = NULL; vTaskDelete(NULL); return;
     }
 
+    File hexFile1 = LittleFS.open(HEX_INGEST_PATH, "r");
+    if (!hexFile1) {
+        lastError = "Failed to open staged hex file";
+        sseLog("err", lastError.c_str());
+        free(pageHasData);
+        programmerState = STATE_ERROR; sseState("error");
+        flashTaskHandle = NULL; vTaskDelete(NULL); return;
+    }
+
     parser.reset();
-    int lineCount = 0, scanPos = 0;
-    while (scanPos < (int)currentHexData.length()) {
+    int lineCount = 0;
+    while (hexFile1.available()) {
         if (cancelFlashRequested) {
             sseLog("warn", "Flash cancelled by user");
             lastError = "Cancelled by user";
+            hexFile1.close();
             free(pageHasData);
             programmerState = STATE_IDLE; sseState("idle");
             flashTaskHandle = NULL; vTaskDelete(NULL); return;
         }
-        int ep = currentHexData.indexOf('\n', scanPos);
-        if (ep < 0) ep = currentHexData.length();
-        String line = currentHexData.substring(scanPos, ep);
+        String line = hexFile1.readStringUntil('\n');
         line.trim();
         if (line.length() > 0) {
             HexRecord rec = parser.parseLine(line);
             if (!rec.valid) {
                 snprintf(buf, sizeof(buf), "Invalid HEX at line %d", lineCount);
                 sseLog("err", buf); lastError = buf;
+                hexFile1.close();
                 free(pageHasData);
                 programmerState = STATE_ERROR; sseState("error");
                 flashTaskHandle = NULL; vTaskDelete(NULL); return;
@@ -600,8 +658,8 @@ void flashTask(void* param) {
             } else if (rec.type == 0x01) break;
             lineCount++;
         }
-        scanPos = ep + 1;
     }
+    hexFile1.close();
 
     // Count pages in current flashSize window for initial progress estimate
     totalPages = 0; currentPage = 0;
@@ -746,8 +804,14 @@ void flashTask(void* param) {
         sseDevice(activeProfileIndex, sig);
     }
 
-    // ── Stage 4: Stream-flash one page at a time ─────────
+    // ── Stage 4: Stream-flash — single sequential pass over the staged file
+    // ─────────────────────────────────────────────────────
     // pageBuf is the only large allocation — pageSize bytes (128 or 256).
+    // Unlike the old per-page rescan (which reread the whole file once per
+    // page — 1024x for a Mega), this walks the file exactly once: bytes
+    // accumulate into pageBuf, and the page flushes (write+verify) the
+    // instant a byte belonging to a later page shows up. Relies on HEX
+    // records arriving in non-decreasing address order (see header note).
     programmerState = STATE_PROGRAMMING;
     sseState("programming");
 
@@ -762,55 +826,35 @@ void flashTask(void* param) {
         flashTaskHandle = NULL; vTaskDelete(NULL); return;
     }
 
-    uint16_t maxPages = (uint16_t)(flashSize / pageSize);
+    File hexFile2 = LittleFS.open(HEX_INGEST_PATH, "r");
+    if (!hexFile2) {
+        lastError = "Failed to reopen staged hex file";
+        sseLog("err", lastError.c_str());
+        if (useV2) programmerV2->exitProgramMode();
+        else        programmer->exitProgramMode();
+        free(pageBuf); free(pageHasData);
+        programmerState = STATE_ERROR; sseState("error");
+        flashTaskHandle = NULL; vTaskDelete(NULL); return;
+    }
+
+    uint32_t maxPages = flashSize / pageSize;
     currentPage = 0;
 
-    for (uint16_t pg = 0; pg < maxPages; pg++) {
-        if (cancelFlashRequested) {
-            sseLog("warn", "Flash cancelled by user");
-            lastError = "Cancelled by user";
-            if (enteredProgramMode) {
-                if (useV2) programmerV2->exitProgramMode();
-                else       programmer->exitProgramMode();
-            }
-            free(pageBuf); free(pageHasData);
-            programmerState = STATE_IDLE; sseState("idle");
-            flashTaskHandle = NULL; vTaskDelete(NULL); return;
-        }
-        if (!(pageHasData[pg / 8] & (1 << (pg % 8)))) continue;
+    bool     havePage   = false;   // pageBuf holds a page we haven't flushed yet
+    bool     pageDirty  = false;   // that page actually has at least one byte in it
+    uint32_t curPageIdx = 0;
+    bool     failed     = false;
 
-        uint32_t pageAddr = (uint32_t)pg * pageSize;
+    // Writes+verifies pageBuf as page `idx`. Returns false (and sets
+    // lastError) on a write or verify failure — caller unwinds from there.
+    auto flushPage = [&](uint32_t idx) -> bool {
+        uint32_t pageAddr = idx * pageSize;
         currentPage++;
-
         snprintf(buf, sizeof(buf),
             "Page %d / %d  (0x%05lX)", currentPage, totalPages,
             (unsigned long)pageAddr);
         sseProgress(currentPage, totalPages, buf);
 
-        // Fill pageBuf from HEX string for this page address range
-        memset(pageBuf, 0xFF, pageSize);
-        parser.reset();
-        int fillPos = 0;
-        while (fillPos < (int)currentHexData.length()) {
-            int ep = currentHexData.indexOf('\n', fillPos);
-            if (ep < 0) ep = currentHexData.length();
-            String line = currentHexData.substring(fillPos, ep);
-            line.trim();
-            if (line.length() > 0) {
-                HexRecord rec = parser.parseLine(line);
-                if (rec.valid && rec.type == 0x00) {
-                    uint32_t addr = parser.getAbsoluteAddress(rec);
-                    for (int i = 0; i < rec.length; i++) {
-                        uint32_t a = addr + i;
-                        if (a >= pageAddr && a < pageAddr + pageSize)
-                            pageBuf[a - pageAddr] = rec.data[i];
-                    }
-                } else if (rec.type == 0x01) break;
-            }
-            fillPos = ep + 1;
-        }
-
-        // Flash the page
         bool writeOk, verifyOk;
         if (useV2) {
             writeOk  = programmerV2->programPage(pageBuf, pageSize, pageAddr);
@@ -827,28 +871,85 @@ void flashTask(void* param) {
             snprintf(buf, sizeof(buf),
                 "Write failed @ 0x%05lX", (unsigned long)pageAddr);
             sseLog("err", buf); lastError = buf;
-            if (useV2) programmerV2->exitProgramMode();
-            else        programmer->exitProgramMode();
-            free(pageBuf); free(pageHasData);
-            programmerState = STATE_ERROR; sseState("error");
-            flashTaskHandle = NULL; vTaskDelete(NULL); return;
+            return false;
         }
         if (!verifyOk) {
             snprintf(buf, sizeof(buf),
                 "Verify failed @ 0x%05lX", (unsigned long)pageAddr);
             sseLog("err", buf); lastError = buf;
-            if (useV2) programmerV2->exitProgramMode();
-            else        programmer->exitProgramMode();
-            free(pageBuf); free(pageHasData);
-            programmerState = STATE_ERROR; sseState("error");
-            flashTaskHandle = NULL; vTaskDelete(NULL); return;
+            return false;
         }
         digitalWrite(config.ledPin, !digitalRead(config.ledPin));
+        return true;
+    };
+
+    parser.reset();
+    while (!failed && hexFile2.available()) {
+        if (cancelFlashRequested) {
+            sseLog("warn", "Flash cancelled by user");
+            lastError = "Cancelled by user";
+            if (enteredProgramMode) {
+                if (useV2) programmerV2->exitProgramMode();
+                else       programmer->exitProgramMode();
+            }
+            hexFile2.close();
+            free(pageBuf); free(pageHasData);
+            programmerState = STATE_IDLE; sseState("idle");
+            flashTaskHandle = NULL; vTaskDelete(NULL); return;
+        }
+
+        String line = hexFile2.readStringUntil('\n');
+        line.trim();
+        if (line.length() == 0) continue;
+
+        HexRecord rec = parser.parseLine(line);
+        if (!rec.valid || rec.type == 0x01) break;  // EOF record (already validated in Stage 1)
+        if (rec.type != 0x00) continue;
+
+        uint32_t addr = parser.getAbsoluteAddress(rec);
+        for (int i = 0; i < rec.length; i++) {
+            uint32_t a  = addr + i;
+            uint32_t pg = a / pageSize;
+            if (pg >= maxPages) continue;  // beyond configured/detected flash size
+
+            if (!havePage) {
+                curPageIdx = pg;
+                havePage   = true;
+                pageDirty  = false;
+                memset(pageBuf, 0xFF, pageSize);
+            } else if (pg != curPageIdx) {
+                if (pg < curPageIdx) {
+                    lastError = "HEX records out of address order — unsupported for streaming flash";
+                    sseLog("err", lastError.c_str());
+                    failed = true;
+                    break;
+                }
+                if (pageDirty && !flushPage(curPageIdx)) { failed = true; break; }
+                curPageIdx = pg;
+                pageDirty  = false;
+                memset(pageBuf, 0xFF, pageSize);
+            }
+            pageBuf[a - curPageIdx * pageSize] = rec.data[i];
+            pageDirty = true;
+        }
+    }
+    hexFile2.close();
+
+    if (!failed && havePage && pageDirty) {
+        if (!flushPage(curPageIdx)) failed = true;
+    }
+
+    if (failed) {
+        if (useV2) programmerV2->exitProgramMode();
+        else        programmer->exitProgramMode();
+        free(pageBuf); free(pageHasData);
+        programmerState = STATE_ERROR; sseState("error");
+        flashTaskHandle = NULL; vTaskDelete(NULL); return;
     }
 
     free(pageBuf);
     free(pageHasData);
-    currentHexData = "";
+    hexIngestClear();
 
     // ── Stage 5: Exit ────────────────────────────────────
     programmerState = STATE_EXITING_PROGMODE;

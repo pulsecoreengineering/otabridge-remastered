@@ -103,7 +103,7 @@ export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBac
     try {
       const text = await file.text();
       if (text.length > MAX_HEX_BYTES) {
-        logActivity(`program: file too large for relay upload (${text.length} > ${MAX_HEX_BYTES} bytes) — not supported over the relay yet`);
+        logActivity(`program: file too large for relay upload (${text.length} > ${MAX_HEX_BYTES} bytes)`);
         return;
       }
 
@@ -178,7 +178,7 @@ export function DeviceDetailPage({ deviceId, onBack }: { deviceId: string; onBac
         <div className="panel">
           <div className="panel-header">
             <span className="panel-title">Program</span>
-            <span className="badge">Uno/Nano/Mini/Leo</span>
+            <span className="badge">Uno/Nano/Mini/Leo/Mega</span>
           </div>
           <div className="panel-body">
             <label className="upload-zone" style={{ display: "block", marginBottom: 10 }}>
