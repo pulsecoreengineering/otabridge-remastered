@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { relayApi, clearToken, ApiError, type DeviceSummary } from "../api/client";
+import { DeviceRow } from "../components/DeviceRow";
 
 export function DevicesPage({
   onLogout,
@@ -91,14 +92,12 @@ export function DevicesPage({
           ) : (
             <ul className="device-list">
               {devices.map((d) => (
-                <li key={d.id} className="device-row" onClick={() => onSelectDevice(d.id)}>
-                  <div className="device-row-left">
-                    <span className={`dot ${d.online ? "online" : ""}`} />
-                    <span>{d.name}</span>
-                    <span className="device-id">{d.id}</span>
-                  </div>
-                  <span className={`badge ${d.online ? "online" : ""}`}>{d.online ? "online" : "offline"}</span>
-                </li>
+                <DeviceRow
+                  key={d.id}
+                  device={d}
+                  onSelect={() => onSelectDevice(d.id)}
+                  onChanged={refresh}
+                />
               ))}
             </ul>
           )}

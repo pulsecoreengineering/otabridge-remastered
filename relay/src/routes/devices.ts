@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../db.js";
 import { verifyAccountToken } from "../auth.js";
 import { generateClaimCode, CLAIM_CODE_TTL_MS } from "../lib/claimCode.js";
+import { ownsDevice } from "../lib/ownership.js";
 import { isDeviceOnline, deviceSockets } from "../ws/registry.js";
 
 async function requireAccount(req: FastifyRequest, reply: FastifyReply): Promise<string | null> {
@@ -27,6 +28,10 @@ const registerSchema = z.object({
 
 const claimSchema = z.object({
   code: z.string().min(8),
+});
+
+const renameSchema = z.object({
+  name: z.string().min(1).max(32),
 });
 
 export async function deviceRoutes(app: FastifyInstance): Promise<void> {
@@ -108,5 +113,44 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       claimedAt: device.claimedAt,
       online: isDeviceOnline(device.id),
     }));
+  });
+
+  // 404 rather than 403 on a not-owned device — doesn't confirm/deny
+  // whether the deviceId exists at all to an account that doesn't own it.
+  app.patch("/devices/:id/name", async (req, reply) => {
+    const accountId = await requireAccount(req, reply);
+    if (!accountId) return;
+
+    const { id } = req.params as { id: string };
+    if (!(await ownsDevice(accountId, id))) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    const { name } = renameSchema.parse(req.body);
+    const device = await prisma.device.update({ where: { id }, data: { name } });
+    return { id: device.id, name: device.name };
+  });
+
+  // Unclaim — releases ownership and resets claimedAt so the device becomes
+  // claimable again. The device itself doesn't get a live push about this
+  // (unlike the "claimed" push) — it finds out the same way it finds out
+  // about being claimed when it wasn't already connected: a fresh
+  // /devices/register call, e.g. on its next reboot. Good enough for v1,
+  // matches the existing reboot-sync pattern rather than inventing a new one.
+  app.delete("/devices/:id", async (req, reply) => {
+    const accountId = await requireAccount(req, reply);
+    if (!accountId) return;
+
+    const { id } = req.params as { id: string };
+    if (!(await ownsDevice(accountId, id))) {
+      return reply.code(404).send({ error: "not_found" });
+    }
+
+    await prisma.$transaction([
+      prisma.accountDevice.delete({ where: { accountId_deviceId: { accountId, deviceId: id } } }),
+      prisma.device.update({ where: { id }, data: { claimedAt: null } }),
+    ]);
+
+    return { id, unclaimed: true };
   });
 }
