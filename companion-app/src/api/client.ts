@@ -79,6 +79,8 @@ export const relayApi = {
 
   unsubscribePush: (endpoint: string): Promise<{ unsubscribed: boolean }> =>
     request("/push/subscribe", { method: "DELETE", body: JSON.stringify({ endpoint }) }),
+
+  sendTestPush: (): Promise<{ sent: number }> => request("/push/test", { method: "POST" }),
 };
 
 export { ApiError };

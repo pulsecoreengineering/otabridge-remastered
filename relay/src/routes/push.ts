@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../db.js";
 import { verifyAccountToken } from "../auth.js";
 import { env } from "../env.js";
+import { notifyAccount } from "../lib/push.js";
 
 async function requireAccount(req: FastifyRequest, reply: FastifyReply): Promise<string | null> {
   const header = req.headers.authorization;
@@ -62,5 +63,21 @@ export async function pushRoutes(app: FastifyInstance): Promise<void> {
     await prisma.pushSubscription.deleteMany({ where: { endpoint, accountId } });
 
     return { unsubscribed: true };
+  });
+
+  // Manual test trigger — lets you verify subscribe -> relay -> push
+  // service -> browser end-to-end without running a real flash to
+  // completion. Not wired into any UI beyond a debug button; harmless to
+  // leave in production, it only ever notifies the caller's own account.
+  app.post("/push/test", async (req, reply) => {
+    const accountId = await requireAccount(req, reply);
+    if (!accountId) return;
+
+    const count = await notifyAccount(accountId, {
+      title: "OTABridge test notification",
+      body: "If you can see this, push is wired up correctly.",
+    });
+
+    return { sent: count };
   });
 }

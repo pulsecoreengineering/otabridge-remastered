@@ -30,6 +30,15 @@ export async function notifyDeviceOwners(deviceId: string, payload: PushPayload)
   await Promise.all(subscriptions.map((sub) => sendOne(sub, payload)));
 }
 
+// Notifies one account directly, no device involved — used by /push/test so
+// the whole subscribe -> relay -> push service -> browser pipeline can be
+// verified without running a real flash to completion first.
+export async function notifyAccount(accountId: string, payload: PushPayload): Promise<number> {
+  const subscriptions = await prisma.pushSubscription.findMany({ where: { accountId } });
+  await Promise.all(subscriptions.map((sub) => sendOne(sub, payload)));
+  return subscriptions.length;
+}
+
 async function sendOne(
   sub: { endpoint: string; p256dh: string; auth: string },
   payload: PushPayload,
