@@ -22,6 +22,7 @@ export function DevicesPage({
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushError, setPushError] = useState<string | null>(null);
+  const [pushMsg, setPushMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (pushSupported()) isPushEnabled().then(setPushEnabled);
@@ -30,6 +31,7 @@ export function DevicesPage({
   async function togglePush() {
     setPushBusy(true);
     setPushError(null);
+    setPushMsg(null);
     try {
       if (pushEnabled) {
         await disablePushNotifications();
@@ -40,6 +42,20 @@ export function DevicesPage({
       }
     } catch (e) {
       setPushError(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setPushBusy(false);
+    }
+  }
+
+  async function sendTestPush() {
+    setPushBusy(true);
+    setPushError(null);
+    setPushMsg(null);
+    try {
+      const { sent } = await relayApi.sendTestPush();
+      setPushMsg(sent > 0 ? `Sent to ${sent} subscription(s) — check for a notification` : "No subscriptions found");
+    } catch (e) {
+      setPushError(e instanceof ApiError ? e.message : "Failed to send test notification");
     } finally {
       setPushBusy(false);
     }
@@ -159,14 +175,22 @@ export function DevicesPage({
         <span style={{ fontSize: 10, color: "var(--text-muted)" }}>PulseCore Engineering</span>
         <div className="row">
           {pushSupported() && (
-            <button className="ghost" disabled={pushBusy} onClick={togglePush}>
-              {pushEnabled ? "Disable notifications" : "Enable notifications"}
-            </button>
+            <>
+              <button className="ghost" disabled={pushBusy} onClick={togglePush}>
+                {pushEnabled ? "Disable notifications" : "Enable notifications"}
+              </button>
+              {pushEnabled && (
+                <button className="ghost" disabled={pushBusy} onClick={sendTestPush}>
+                  Send test
+                </button>
+              )}
+            </>
           )}
           <button className="ghost" onClick={() => { clearToken(); onLogout(); }}>Log out</button>
         </div>
       </div>
       {pushError && <div className="msg err">{pushError}</div>}
+      {pushMsg && <div className="msg ok">{pushMsg}</div>}
     </>
   );
 }
