@@ -60,7 +60,11 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     return { claimed: false, code, expiresInSeconds: CLAIM_CODE_TTL_MS / 1000 };
   });
 
-  app.post("/devices/claim", async (req, reply) => {
+  // Rate-limited per IP: a claim code is an 8-char code from a ~30-char
+  // alphabet (a huge keyspace on its own), but nothing else was stopping
+  // automated guessing against this endpoint. 10/min is generous for a
+  // human retrying a typo, tight enough to make guessing impractical.
+  app.post("/devices/claim", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req, reply) => {
     const accountId = await requireAccount(req, reply);
     if (!accountId) return;
 
