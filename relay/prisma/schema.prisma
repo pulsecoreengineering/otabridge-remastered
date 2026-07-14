@@ -8,11 +8,12 @@ datasource db {
 }
 
 model Account {
-  id           String          @id @default(cuid())
-  email        String          @unique
-  passwordHash String
-  createdAt    DateTime        @default(now())
-  devices      AccountDevice[]
+  id                String            @id @default(cuid())
+  email             String            @unique
+  passwordHash      String
+  createdAt         DateTime          @default(now())
+  devices           AccountDevice[]
+  pushSubscriptions PushSubscription[]
 }
 
 model Device {
@@ -46,4 +47,18 @@ model AccountDevice {
   createdAt DateTime @default(now())
 
   @@id([accountId, deviceId])
+}
+
+// One row per browser/device the account has enabled notifications on —
+// endpoint is unique per push service subscription (effectively per browser
+// install), so re-subscribing (e.g. after clearing site data) just upserts.
+model PushSubscription {
+  endpoint  String   @id
+  accountId String
+  account   Account  @relation(fields: [accountId], references: [id])
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  @@index([accountId])
 }

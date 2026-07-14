@@ -5,6 +5,7 @@ import websocket from "@fastify/websocket";
 import { env } from "./env.js";
 import { authRoutes } from "./routes/auth.js";
 import { deviceRoutes } from "./routes/devices.js";
+import { pushRoutes } from "./routes/push.js";
 import { deviceSocketRoute } from "./ws/deviceSocket.js";
 import { appSocketRoute } from "./ws/appSocket.js";
 
@@ -27,6 +28,7 @@ await app.register(rateLimit, { global: false });
 await app.register(websocket);
 await app.register(authRoutes);
 await app.register(deviceRoutes);
+await app.register(pushRoutes);
 await app.register(deviceSocketRoute);
 await app.register(appSocketRoute);
 

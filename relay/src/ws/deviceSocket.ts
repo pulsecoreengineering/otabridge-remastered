@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import { prisma } from "../db.js";
 import { generateChallenge, verifySignature } from "../lib/ed25519.js";
+import { notifyDeviceOwners } from "../lib/push.js";
 import { deviceSockets, broadcastToDeviceSubscribers } from "./registry.js";
 
 // Handshake: server sends { type: "challenge", nonce } on connect; the device
@@ -23,6 +24,7 @@ export async function deviceSocketRoute(app: FastifyInstance): Promise<void> {
     const nonce = generateChallenge();
     let authenticated = false;
     let deviceId: string | null = null;
+    let deviceName: string | null = null;
 
     socket.send(JSON.stringify({ type: "challenge", nonce }));
 
@@ -44,6 +46,7 @@ export async function deviceSocketRoute(app: FastifyInstance): Promise<void> {
 
           authenticated = true;
           deviceId = device.id;
+          deviceName = device.name;
           clearTimeout(authTimeout);
           deviceSockets.set(device.id, socket);
           await prisma.device.update({ where: { id: device.id }, data: { lastSeenAt: new Date() } });
@@ -57,8 +60,9 @@ export async function deviceSocketRoute(app: FastifyInstance): Promise<void> {
       // Post-auth: data-plane push from the device — stamp deviceId on and
       // forward to whichever app sessions are subscribed to it.
       let payload = raw.toString();
+      let parsed: any = null;
       try {
-        const parsed = JSON.parse(payload);
+        parsed = JSON.parse(payload);
         parsed.deviceId = deviceId;
         payload = JSON.stringify(parsed);
       } catch {
@@ -67,6 +71,19 @@ export async function deviceSocketRoute(app: FastifyInstance): Promise<void> {
         // strict validator.
       }
       broadcastToDeviceSubscribers(deviceId!, payload);
+
+      // Push notification on flash completion — fires regardless of whether
+      // any app session is currently subscribed, since that's the entire
+      // point (the user may have walked away from the bench). Not awaited:
+      // a slow/failing push service shouldn't delay the WS broadcast above.
+      if (parsed?.type === "status" && (parsed.state === "success" || parsed.state === "error")) {
+        const label = deviceName ?? deviceId!;
+        const errorSuffix = parsed.state === "error" && parsed.lastError ? `: ${parsed.lastError}` : "";
+        notifyDeviceOwners(deviceId!, {
+          title: parsed.state === "success" ? "Flash complete" : "Flash failed",
+          body: `${label}${errorSuffix}`,
+        }).catch(() => {});
+      }
     });
 
     socket.on("close", () => {
