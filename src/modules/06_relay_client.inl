@@ -9,28 +9,27 @@
 // this device, and every /ws/device connection is authenticated by signing a
 // server-issued nonce rather than presenting a long-lived shared secret.
 //
-// KNOWN MVP GAP: both the HTTPS register call and the WSS connection below
-// skip TLS certificate validation (WiFiClientSecure::setInsecure(), no
-// pinned fingerprint on the WebSocket client). The Ed25519 handshake itself
-// still can't be forged by an on-path attacker without the private key, but
-// the /devices/register response carries the claim code in the clear — an
-// on-path attacker could intercept it and claim the device before its
-// rightful owner does. Pin the relay's certificate/fingerprint before this
-// leaves a trusted network.
+// Both the HTTPS register call and the WSS connection below validate the
+// relay's TLS certificate against a pinned root CA (see RelayCA.h) rather
+// than trusting any certificate — this matters even on top of the Ed25519
+// handshake, since /devices/register's response carries the claim code in
+// the clear, and an on-path attacker on an untrusted network could otherwise
+// intercept it and claim the device before its rightful owner does.
 
 static uint8_t relayPrivateKey[32];
 static uint8_t relayPublicKey[32];
 static WebSocketsClient relayWs;
 static bool relayWsStarted = false;
 
-// Relay-mediated `program` — bounded to boards that already work fine with
-// the existing full-buffer local upload path (see /api/upload-hex): 128KB of
-// hex TEXT comfortably covers even a fully-packed 32KB-flash board (Uno,
-// Nano, Leonardo, Pro Micro — Intel HEX text runs ~2.7x the binary size), well
-// short of Mega territory. Mega-class images need streaming ingest first,
-// deliberately not attempted here — see relay/README.md.
-#define RELAY_PROGRAM_MAX_HEX_BYTES 131072
-static bool relayProgramReceiving = false;
+// Relay-mediated `program` — chunks stream straight to the hexIngest file on
+// LittleFS (see 03_protocol_flash.inl), same as the local /api/upload-hex
+// path, so this cap is just a sanity ceiling rather than a RAM constraint.
+// Sized for the largest BUILTIN_PROFILES flash (Mega 2560, 256KB) at Intel
+// HEX's worst-case ~2.8x text expansion (16 data bytes -> a 45-char line):
+// 256KB * 2.8 =~ 737KB, rounded up with headroom.
+#define RELAY_PROGRAM_MAX_HEX_BYTES (800 * 1024)
+static bool   relayProgramReceiving      = false;
+static size_t relayProgramBytesReceived  = 0;  // tracked locally — cheaper than re-statting LittleFS per chunk
 
 static void relayBytesToHex(const uint8_t* bytes, size_t len, char* out) {
     static const char* hexchars = "0123456789abcdef";
@@ -134,7 +133,7 @@ void registerWithRelay() {
     relayDeviceId = relayFullDeviceId();
 
     WiFiClientSecure client;
-    client.setInsecure(); // MVP — see file header note
+    client.setCACert(OTABRIDGE_RELAY_CA_CERT);
 
     HTTPClient https;
     String url = String("https://") + OTABRIDGE_RELAY_HOST + ":" +
@@ -185,8 +184,9 @@ void registerWithRelay() {
     }
 }
 
-// ─── Command dispatch (Phase A: control-plane only — no firmware bytes
-// cross the relay; see relay/README.md for why) ─────────────────────
+// ─── Command dispatch — cancel/restart/status/debug plus relay-mediated
+// program_start/program_chunk/program_end (hex text streamed to LittleFS via
+// hexIngest*(), see 03_protocol_flash.inl) ───────────────────────────
 static void relaySendCmdResult(const String& requestId, bool ok, const char* message = "") {
     DynamicJsonDocument doc(256);
     doc["type"]      = "cmd_result";
@@ -275,19 +275,19 @@ static void relayHandleCommand(DynamicJsonDocument& doc) {
         relaySendCmdResult(requestId, true);
 
     } else if (action == "program_start") {
-        // Mirrors the start of POST /api/upload-hex (clears currentHexData)
-        // plus the busy-check from POST /api/program.
+        // Mirrors the start of POST /api/upload-hex (opens the hexIngest
+        // file) plus the busy-check from POST /api/program.
         if (programmerState != STATE_IDLE && programmerState != STATE_SUCCESS &&
             programmerState != STATE_ERROR) {
             relaySendCmdResult(requestId, false, "Programmer busy");
         } else {
             long totalBytes = doc["totalBytes"] | 0;
             if (totalBytes <= 0 || totalBytes > RELAY_PROGRAM_MAX_HEX_BYTES) {
-                relaySendCmdResult(requestId, false,
-                    "Hex too large for relay upload — use local upload, or "
-                    "wait for Mega streaming support");
+                relaySendCmdResult(requestId, false, "Hex too large for relay upload");
+            } else if (!hexIngestBegin()) {
+                relaySendCmdResult(requestId, false, "Failed to open storage for hex data");
             } else {
-                currentHexData         = "";
+                relayProgramBytesReceived = 0;
                 activeProfileIndex     = -1;
                 manualOverride.active  = false;
                 relayProgramReceiving  = true;
@@ -306,12 +306,18 @@ static void relayHandleCommand(DynamicJsonDocument& doc) {
             String chunk = doc["data"] | "";
             // Defensive cap — program_start only checked the *declared*
             // total; don't trust it, enforce on what's actually arriving.
-            if (currentHexData.length() + chunk.length() > RELAY_PROGRAM_MAX_HEX_BYTES) {
+            if (relayProgramBytesReceived + chunk.length() > RELAY_PROGRAM_MAX_HEX_BYTES) {
                 relayProgramReceiving = false;
-                currentHexData        = "";
+                hexIngestEnd();
+                hexIngestClear();
                 relaySendCmdResult(requestId, false, "Exceeded max hex size — aborted");
+            } else if (!hexIngestAppend((const uint8_t*)chunk.c_str(), chunk.length())) {
+                relayProgramReceiving = false;
+                hexIngestEnd();
+                hexIngestClear();
+                relaySendCmdResult(requestId, false, "Storage write failed (out of space?)");
             } else {
-                currentHexData += chunk;
+                relayProgramBytesReceived += chunk.length();
                 relaySendCmdResult(requestId, true);
             }
         }
@@ -321,7 +327,8 @@ static void relayHandleCommand(DynamicJsonDocument& doc) {
         // sseState()/sseProgress() hooks already push to the relay as
         // flashTask runs, nothing extra needed.
         relayProgramReceiving = false;
-        if (currentHexData.length() == 0) {
+        hexIngestEnd();
+        if (hexIngestSize() == 0) {
             relaySendCmdResult(requestId, false, "No hex data received");
         } else {
             programmerState      = STATE_LOADING_HEX;
@@ -424,7 +431,8 @@ void relayLoop() {
     if (!relayRegistered) return; // nothing to connect with yet
 
     if (!relayWsStarted) {
-        relayWs.beginSSL(OTABRIDGE_RELAY_HOST, OTABRIDGE_RELAY_PORT, "/ws/device");
+        relayWs.beginSslWithCA(OTABRIDGE_RELAY_HOST, OTABRIDGE_RELAY_PORT, "/ws/device",
+                                OTABRIDGE_RELAY_CA_CERT);
         relayWs.onEvent(relayWsEvent);
         relayWs.setReconnectInterval(5000);
         relayWsStarted = true;

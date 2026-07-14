@@ -75,9 +75,6 @@ CORS is same-origin by design: the UI is served by the device itself.
 
 ## Known Limits (MVP)
 
-- HEX content is held in RAM during flash — fine for Uno/Nano-class images and
-  typical Mega sketches; a completely full 256KB Mega image will not fit.
-  Streaming ingest is planned.
 - Setup AP password is a shared default until per-unit provisioning labels
   exist. Provision in a trusted environment.
 - WiFi credential changes (setup page or Config tab) take effect after restart.

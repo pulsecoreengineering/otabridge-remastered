@@ -14,10 +14,11 @@ Deployed and verified end-to-end on real hardware against production
 (subscribe → cmd → cmd_result) have all been exercised against the live
 deployment or a real Postgres instance with simulated WebSocket clients.
 
-**What this is not (yet):** relaying actual firmware bytes (a `.hex` upload)
-through the relay — that's Phase B, deliberately deferred (see "Known gaps"
-below for why: it's a RAM problem on the device, not a flash problem, and
-overlaps with the not-yet-built streaming-HEX-ingest work).
+Relay-mediated firmware upload (`program_start`/`program_chunk`/`program_end`
+over `WS /ws/device`, see below) is built and, as of the streaming-HEX-ingest
+work, no longer RAM-bounded on the device — chunks stream straight to
+LittleFS instead of a RAM buffer, so it covers the full board range
+(Uno/Nano/Mini/Leonardo through Mega 2560), not just small-flash boards.
 
 ## Why it exists
 
@@ -144,15 +145,12 @@ since the claim code only lives in the boot-time serial log otherwise.
 
 ## Known gaps / next phases
 
-- **Phase B (relay-mediated firmware upload) is unbuilt.** Deliberately: the
-  device already buffers a whole `.hex` file in RAM for *local* uploads
-  (see the top-level README's Known Limits), and wrapping firmware bytes in
-  JSON/base64 over WS would make that worse, not better. The plan is direct
-  LAN upload to the device's local IP whenever the app and device share a
-  network (relay only used for discovery/signaling in that case), and
-  chunked binary WS frames — written straight into a streaming flash
-  pipeline, never fully buffered — for genuine off-LAN uploads. Both need
-  the not-yet-built streaming HEX ingest first.
+- Relay-mediated upload still carries hex TEXT as JSON string chunks (not
+  binary WS frames) — simpler and good enough at current chunk sizes, but a
+  binary framing would cut relay bandwidth roughly in half if that ever
+  matters. Direct LAN upload to the device's local IP (relay only used for
+  discovery/signaling) remains the better path whenever the app and device
+  share a network.
 - Presence registry (and now subscription routing) is in-memory — fine for a
   single instance; a multi-instance deployment needs a shared layer (e.g.
   Redis pub/sub) to route across processes.
@@ -162,8 +160,5 @@ since the claim code only lives in the boot-time serial log otherwise.
   clients against a real Postgres instance; the firmware side needs a real
   build/flash/serial-monitor pass the same way the identity/claim flow got
   tested.
-- Firmware skips TLS certificate validation on both the register call and the
-  WS connection (see the note at the top of `06_relay_client.inl`) — fine for
-  bench testing, not for a device leaving a trusted network.
 - Account auth is email/password only; OAuth can be added later without
   touching the device/claim model, since it's orthogonal.

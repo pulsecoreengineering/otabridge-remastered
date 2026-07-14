@@ -1,6 +1,7 @@
 #pragma once
 
 #include "otabridge/AppState.h"
+#include "otabridge/RelayCA.h"
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <WebSocketsClient.h>
