@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { relayApi, clearToken, ApiError, type DeviceSummary } from "../api/client";
 import { DeviceRow } from "../components/DeviceRow";
+import { pushSupported, isPushEnabled, enablePushNotifications, disablePushNotifications } from "../push";
 
 export function DevicesPage({
   onLogout,
@@ -18,6 +19,31 @@ export function DevicesPage({
   const [claimBusy, setClaimBusy] = useState(false);
   const [claimMsg, setClaimMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushError, setPushError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (pushSupported()) isPushEnabled().then(setPushEnabled);
+  }, []);
+
+  async function togglePush() {
+    setPushBusy(true);
+    setPushError(null);
+    try {
+      if (pushEnabled) {
+        await disablePushNotifications();
+        setPushEnabled(false);
+      } else {
+        await enablePushNotifications();
+        setPushEnabled(true);
+      }
+    } catch (e) {
+      setPushError(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setPushBusy(false);
+    }
+  }
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -131,8 +157,16 @@ export function DevicesPage({
 
       <div className="row-between">
         <span style={{ fontSize: 10, color: "var(--text-muted)" }}>PulseCore Engineering</span>
-        <button className="ghost" onClick={() => { clearToken(); onLogout(); }}>Log out</button>
+        <div className="row">
+          {pushSupported() && (
+            <button className="ghost" disabled={pushBusy} onClick={togglePush}>
+              {pushEnabled ? "Disable notifications" : "Enable notifications"}
+            </button>
+          )}
+          <button className="ghost" onClick={() => { clearToken(); onLogout(); }}>Log out</button>
+        </div>
       </div>
+      {pushError && <div className="msg err">{pushError}</div>}
     </>
   );
 }
