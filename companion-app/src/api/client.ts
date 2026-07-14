@@ -33,7 +33,10 @@ class ApiError extends Error {
 async function request(path: string, init: RequestInit = {}): Promise<any> {
   const token = getToken();
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    // Only set when there's an actual body — Fastify's JSON parser rejects
+    // an empty body under Content-Type: application/json (POST /push/test,
+    // which has nothing to send, hit exactly this and came back 400).
+    ...(init.body ? { "Content-Type": "application/json" } : {}),
     ...(init.headers as Record<string, string> | undefined),
   };
   if (token) headers.Authorization = `Bearer ${token}`;
