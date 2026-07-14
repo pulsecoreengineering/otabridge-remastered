@@ -5,9 +5,11 @@ import { DeviceRow } from "../components/DeviceRow";
 export function DevicesPage({
   onLogout,
   onSelectDevice,
+  onFlashFleet,
 }: {
   onLogout: () => void;
   onSelectDevice: (deviceId: string) => void;
+  onFlashFleet: (devices: DeviceSummary[]) => void;
 }) {
   const [devices, setDevices] = useState<DeviceSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -15,12 +17,18 @@ export function DevicesPage({
   const [claimCode, setClaimCode] = useState("");
   const [claimBusy, setClaimBusy] = useState(false);
   const [claimMsg, setClaimMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setDevices(await relayApi.listDevices());
+      const list = await relayApi.listDevices();
+      setDevices(list);
+      // Drop selections for devices that went offline or disappeared —
+      // fleet flash only ever targets devices confirmed online right now.
+      const onlineIds = new Set(list.filter((d) => d.online).map((d) => d.id));
+      setSelected((prev) => new Set([...prev].filter((id) => onlineIds.has(id))));
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
         clearToken();
@@ -52,6 +60,14 @@ export function DevicesPage({
     }
   }
 
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
   const onlineCount = devices.filter((d) => d.online).length;
 
   return (
@@ -81,7 +97,14 @@ export function DevicesPage({
           <span className="panel-title">
             Devices{devices.length > 0 && ` — ${onlineCount}/${devices.length} online`}
           </span>
-          <button className="ghost" onClick={refresh} disabled={loading}>&#8635;</button>
+          <div className="row">
+            {selected.size > 0 && (
+              <button className="primary" onClick={() => onFlashFleet(devices.filter((d) => selected.has(d.id)))}>
+                Flash {selected.size} selected
+              </button>
+            )}
+            <button className="ghost" onClick={refresh} disabled={loading}>&#8635;</button>
+          </div>
         </div>
         <div className="panel-body">
           {error && <div className="msg err">{error}</div>}
@@ -97,6 +120,8 @@ export function DevicesPage({
                   device={d}
                   onSelect={() => onSelectDevice(d.id)}
                   onChanged={refresh}
+                  checked={selected.has(d.id)}
+                  onToggleChecked={() => toggleSelected(d.id)}
                 />
               ))}
             </ul>

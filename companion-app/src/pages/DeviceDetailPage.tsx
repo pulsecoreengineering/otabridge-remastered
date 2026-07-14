@@ -4,9 +4,7 @@ import { getToken } from "../api/client";
 import { ActivityLog } from "../components/ActivityLog";
 import { DebugConsole } from "../components/DebugConsole";
 import { nowStamp, type LogLine } from "../types";
-
-const CHUNK_SIZE = 4096; // chars of hex text per program_chunk — see relay/README.md
-const MAX_HEX_BYTES = 131072; // must match RELAY_PROGRAM_MAX_HEX_BYTES in firmware
+import { CHUNK_SIZE, MAX_HEX_BYTES } from "../constants";
 
 type Status = { state: string; page: number; total: number; lastError: string };
 

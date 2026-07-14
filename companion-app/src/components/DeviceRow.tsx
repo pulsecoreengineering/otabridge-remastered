@@ -5,10 +5,14 @@ export function DeviceRow({
   device,
   onSelect,
   onChanged,
+  checked,
+  onToggleChecked,
 }: {
   device: DeviceSummary;
   onSelect: () => void;
   onChanged: () => void; // ask the parent to refetch the list after rename/unclaim
+  checked: boolean;
+  onToggleChecked: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(device.name);
@@ -51,6 +55,15 @@ export function DeviceRow({
   return (
     <li className="device-row" onClick={editing || confirmingUnclaim ? undefined : onSelect}>
       <div className="device-row-left">
+        <input
+          type="checkbox"
+          style={{ width: "auto" }}
+          checked={checked}
+          disabled={!device.online}
+          title={device.online ? "Select for fleet flash" : "Offline devices can't be selected"}
+          onClick={(e) => e.stopPropagation()}
+          onChange={onToggleChecked}
+        />
         <span className={`dot ${device.online ? "online" : ""}`} />
         {editing ? (
           <input

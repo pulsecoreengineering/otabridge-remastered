@@ -1,11 +1,16 @@
 import { getRelayWsBase } from "./client";
 
+// deviceId is present on every device->relay->app push (the relay stamps it
+// on before forwarding, see deviceSocket.ts) except "error", which the relay
+// itself generates and already scopes via requestId. Marked optional rather
+// than required since TS can't otherwise express "present on all variants
+// but this one."
 export type RelayMessage =
   | { type: "subscribed"; deviceId: string }
-  | { type: "status"; state: string; page?: number; total?: number; lastError?: string }
-  | { type: "progress"; page: number; total: number; label: string }
-  | { type: "debug_line"; line: string; ms?: number }
-  | { type: "cmd_result"; requestId: string; ok: boolean; message?: string }
+  | { type: "status"; deviceId?: string; state: string; page?: number; total?: number; lastError?: string }
+  | { type: "progress"; deviceId?: string; page: number; total: number; label: string }
+  | { type: "debug_line"; deviceId?: string; line: string; ms?: number }
+  | { type: "cmd_result"; deviceId?: string; requestId: string; ok: boolean; message?: string }
   | { type: "error"; message: string; requestId?: string | null };
 
 type Listener = (msg: RelayMessage) => void;
